@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/
+
+# Temporary files
+*.tmp
+temp_*.prd
+temp_*.hpr
+temp_*.pri
+
+# Data files (large files, uncomment if you don't want to track them)
+# data/*.hpr
+# data/*.prd
+# data/*.pri
+
+# Logs
+*.log
