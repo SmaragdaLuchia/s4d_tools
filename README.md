@@ -1,4 +1,4 @@
-# StanForD Visualizer
+# StanForD Parser
 
 A web-based visualization tool for analyzing StanForD (Standard for Forest Data) harvester files. This application parses and visualizes data from production (.prd), production-individual (.pri), and harvester production (.hpr) files, providing comprehensive statistics and insights about forest harvesting operations.
 
@@ -23,7 +23,7 @@ A web-based visualization tool for analyzing StanForD (Standard for Forest Data)
 
 ```bash
 git clone <repository-url>
-cd Visualizer
+cd stanford_parser
 ```
 
 ### Step 2: Create a Virtual Environment
@@ -32,11 +32,11 @@ It's recommended to use a virtual environment to isolate project dependencies:
 
 ```bash
 # Create virtual environment
-python3 -m venv venv
+python3 -m venv .venv
 
 # Activate virtual environment
 # On macOS/Linux:
-source venv/bin/activate
+source .venv/bin/activate
 
 # On Windows:
 # venv\Scripts\activate
