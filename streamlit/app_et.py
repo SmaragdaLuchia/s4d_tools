@@ -6,9 +6,9 @@ import os
 # Add parent directory to path to import parsers
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from StanForD_visualizer.stanford_classic.prd_parser import PRDParser
-from StanForD_visualizer.stanford_classic.pri_parser import PRIParser
-from StanForD_visualizer.stanford_2010.hpr_parser import HPRParser
+from stanford_parser.stanford_classic.prd_parser import PRDParser
+from stanford_parser.stanford_classic.pri_parser import PRIParser
+from stanford_parser.stanford_2010.hpr_parser import HPRParser
 
 # Page configuration
 st.set_page_config(
