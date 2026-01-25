@@ -18,7 +18,7 @@ st.set_page_config(
 )
 
 # Title and description
-st.title("🌲 Harvester File Analysis")
+st.title("🌲 Harvester File Analysis v1")
 st.write("Upload your .prd or .hpr files to view statistics and analysis.")
 st.write("**Note:** PRI (Production-individual) file can be uploaded together with PRD file to get additional production information.")
 
