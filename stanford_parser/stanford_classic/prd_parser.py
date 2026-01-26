@@ -1,27 +1,6 @@
 import pandas as pd
+from .._utils import format_date
 from .constants import DEFAULT_ENCODING, BLOCK_SEPARATOR
-
-def format_prd_date(date_str):
-    """
-    Format PRD date from YYYYMMDDHHMMSS to DD-MM-YYYY HH:MM format.
-    Example: 20231102160352 -> 02-11-2023 16:03
-    """
-    if not date_str or len(date_str) < 14:
-        return date_str
-    
-    try:
-        # Parse YYYYMMDDHHMMSS format
-        year = date_str[0:4]
-        month = date_str[4:6]
-        day = date_str[6:8]
-        hour = date_str[8:10]
-        minute = date_str[10:12]
-        
-        # Format as DD-MM-YYYY HH:MM
-        return f"{day}-{month}-{year} {hour}:{minute}"
-    except (ValueError, IndexError):
-        # If parsing fails, return original string
-        return date_str
 
 class PRDParser:
     """Parses Production reports (Summaries)"""
@@ -70,8 +49,8 @@ class PRDParser:
         application_version_modified = self._get_value(2, 2, '')  # software_version
         
         # Format dates from YYYYMMDDHHMMSS to DD-MM-YYYY HH:MM
-        creation_date = format_prd_date(creation_date_raw) if creation_date_raw else ''
-        modification_date = format_prd_date(modification_date_raw) if modification_date_raw else ''
+        creation_date = format_date(creation_date_raw) if creation_date_raw else ''
+        modification_date = format_date(modification_date_raw) if modification_date_raw else ''
         
         # Include all fields that CAN be filled from PRD (even if empty)
         # Removed: country_code (never in PRD)
@@ -93,12 +72,7 @@ class PRDParser:
         
         machine_base_manufacturer = self._get_value(3, 5, '')
         machine_base_model = self._get_value(3, 6, '')
-        
-        # Include only fields that CAN be filled from PRD (even if empty)
-        # Removed: machine_category, machine_key, machine_user_id, machine_owner_id,
-        #          machine_application_version, base_machine_manufacturer_id,
-        #          machine_head_manufacturer, machine_head_model,
-        #          operator_key, operator_user_id, operator_first_name, operator_last_name
+
         machine_data.append({
             'machine_base_manufacturer': machine_base_manufacturer,
             'machine_base_model': machine_base_model
@@ -150,11 +124,6 @@ class PRDParser:
         else:
             species_ids = []
         
-        # Create one row per species - include only fields that CAN be filled from PRD (even if empty)
-        # Removed: modification_date, species_group_user_id, species_group_user_id_agency,
-        #          species_group_info, species_group_version, species_group_presentation_order,
-        #          dbh_height, start_grade, mth_start_grade, bark_function_category,
-        #          bark_constant_a, bark_factor_b
         for name, species_id in zip(species_names, species_ids):
             species_groups_data.append({
                 'species_group_key': str(species_id),
@@ -177,8 +146,6 @@ class PRDParser:
         else:
             product_names = []
         
-        # Create one row per product - include only fields that CAN be filled from PRD (even if empty)
-        # Removed: product_modification_date, product_user_id, product_user_id_agency, species_group_key
         for idx, product_name in enumerate(product_names, start=1):
             products_data.append({
                 'product_key': str(idx),
@@ -213,7 +180,7 @@ class PRDParser:
         
         # Ensure all lists have the same length to prevent DataFrame creation errors
         # Use the maximum length of both lists as reference to prevent data loss
-        # Pad shorter lists with default values (empty string for names, 0 for counts)
+        # Pad shorter lists with default values 
         if species_names or stems_per_species:
             reference_length = max(
                 len(species_names) if species_names else 0,

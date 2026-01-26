@@ -1,5 +1,6 @@
 import xml.etree.ElementTree as ET
 import pandas as pd
+from .._utils import format_date
 
 
 class HPRParser:
@@ -32,11 +33,15 @@ class HPRParser:
         header_data = []
         header_node = self.root.find('s:HarvestedProductionHeader', self.ns)
         
-        creation_date = self._get_text(header_node, 's:CreationDate')
-        modification_date = self._get_text(header_node, 's:ModificationDate')
+        creation_date_raw = self._get_text(header_node, 's:CreationDate')
+        modification_date_raw = self._get_text(header_node, 's:ModificationDate')
         application_version_created = self._get_text(header_node, 's:ApplicationVersionCreated')
         application_version_modified = self._get_text(header_node, 's:ApplicationVersionModified')
         country_code = self._get_text(header_node, 's:CountryCode')
+
+        # Format dates from ISO to DD-MM-YYYY HH:MM
+        creation_date = format_date(creation_date_raw)
+        modification_date = format_date(modification_date_raw)
 
         header_data.append({
             'creation_date': creation_date,
@@ -104,7 +109,8 @@ class HPRParser:
         
         for species_group in species_groups:
             species_group_key = self._get_text(species_group, 's:SpeciesGroupKey')
-            modification_date = self._get_text(species_group, 's:SpeciesGroupModificationDate')
+            modification_date_raw = self._get_text(species_group, 's:SpeciesGroupModificationDate')
+            modification_date = format_date(modification_date_raw)
             species_group_user_id = species_group.find('s:SpeciesGroupUserID', self.ns)
             species_group_user_id_value = species_group_user_id.text if species_group_user_id is not None else ''
             species_group_user_id_agency = species_group_user_id.attrib.get('agency', '') if species_group_user_id is not None else ''
@@ -159,7 +165,8 @@ class HPRParser:
             product_key = self._get_text(product, 's:ProductKey')
             classified_product = product.find('s:ClassifiedProductDefinition', self.ns)
             product_name = self._get_text(classified_product, 's:ProductName')
-            product_modification_date = self._get_text(classified_product, 's:ModificationDate')
+            product_modification_date_raw = self._get_text(classified_product, 's:ModificationDate')
+            product_modification_date = format_date(product_modification_date_raw)
             product_user_id = classified_product.find('s:ProductUserID', self.ns) if classified_product is not None else None
             product_user_id_value = product_user_id.text if product_user_id is not None else ''
             product_user_id_agency = product_user_id.attrib.get('agency', '') if product_user_id is not None else ''
@@ -190,13 +197,15 @@ class HPRParser:
             object_user_id_value = object_user_id.text if object_user_id is not None else ''
             object_user_id_agency = object_user_id.attrib.get('agency', '') if object_user_id is not None else ''
             object_name = self._get_text(obj, 's:ObjectName')
-            object_modification_date = self._get_text(obj, 's:ObjectModificationDate')
+            object_modification_date_raw = self._get_text(obj, 's:ObjectModificationDate')
+            object_modification_date = format_date(object_modification_date_raw)
             forest_certification = self._get_text(obj, 's:ForestCertification')
             contract_number = obj.find('s:ContractNumber', self.ns)
             contract_number_value = contract_number.text if contract_number is not None else ''
             contract_number_category = contract_number.attrib.get('ContractCategory', '') if contract_number is not None else ''
             real_estate_id_object = self._get_text(obj, 's:RealEstateIDObject')
-            start_date = self._get_text(obj, 's:StartDate')
+            start_date_raw = self._get_text(obj, 's:StartDate')
+            start_date = format_date(start_date_raw)
             
             # Parse SubObject
             sub_object = obj.find('s:SubObject', self.ns)
@@ -242,7 +251,8 @@ class HPRParser:
             sub_object_key = self._get_text(stem, 's:SubObjectKey')
             species_group_key = self._get_text(stem, 's:SpeciesGroupKey')
             operator_key_stem = self._get_text(stem, 's:OperatorKey')
-            harvest_date = self._get_text(stem, 's:HarvestDate')
+            harvest_date_raw = self._get_text(stem, 's:HarvestDate')
+            harvest_date = format_date(harvest_date_raw)
             stem_number = self._get_text(stem, 's:StemNumber')
             processing_category = self._get_text(stem, 's:ProcessingCategory')
             stump_treatment = self._get_text(stem, 's:StumpTreatment')
