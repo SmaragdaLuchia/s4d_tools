@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<HarvestedProduction xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" messageType="hpr" areaUnit="ha" diameterUnit="mm" lengthUnit="cm" volumeUnit="m3" weightUnit="kg" version="3.3" versionDate="2017-02-06" xmlns="urn:skogforsk:stanford2010">
+  <HarvestedProductionHeader>
+    <CreationDate>2024-06-01T08:00:00+02:00</CreationDate>
+    <ModificationDate>2024-06-01T16:00:00+02:00</ModificationDate>
+    <ApplicationVersionCreated>ToyMaker 1.0</ApplicationVersionCreated>
+    <ApplicationVersionModified>ToyMaker 1.0</ApplicationVersionModified>
+    <CountryCode>233</CountryCode>
+  </HarvestedProductionHeader>
+  <Machine machineCategory="Harvester">
+    <MachineKey>1234567890</MachineKey>
+    <MachineUserID>TOY_MACHINE_01</MachineUserID>
+    <MachineHeadManufacturer>ToyHead</MachineHeadManufacturer>
+    <MachineHeadModel>TH-500</MachineHeadModel>
+    <OperatorDefinition>
+       <OperatorKey>999</OperatorKey>
+       <ContactInformation>
+          <FirstName>Test</FirstName>
+          <LastName>Driver</LastName>
+       </ContactInformation>
+    </OperatorDefinition>
+  </Machine>
+  <ObjectDefinition>
+    <ObjectKey>TOY_SITE_01</ObjectKey>
+    <ObjectName>Toy Forest Stand</ObjectName>
+    <SubObject>
+      <SubObjectKey>Sub_01</SubObjectKey>
+    </SubObject>
+  </ObjectDefinition>
+  <Stem>
+    <StemKey>STEM_001</StemKey>
+    <ObjectKey>TOY_SITE_01</ObjectKey>
+    <SubObjectKey>Sub_01</SubObjectKey>
+    <SpeciesGroupKey>1</SpeciesGroupKey>
+    <StemNumber>1</StemNumber>
+    <SingleTreeProcessedStem>
+       <DBH>250</DBH>
+       <Log>
+          <LogKey>1</LogKey>
+          <ProductKey>1</ProductKey>
+          <LogVolume logVolumeCategory="m3sub">0.150</LogVolume>
+          <LogMeasurement>
+             <LogLength>450</LogLength>
+             <LogDiameter logDiameterCategory="Top ub">200</LogDiameter>
+          </LogMeasurement>
+       </Log>
+    </SingleTreeProcessedStem>
+  </Stem>
+</HarvestedProduction>
