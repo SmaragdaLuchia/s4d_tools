@@ -1,5 +1,38 @@
 import pandas as pd
+import numpy as np
 from .constants import DEFAULT_ENCODING, BLOCK_SEPARATOR
+
+PRI_LOG_CODES = {
+    1: "assortment_index",
+    2: "species_index",
+    20: "price_matrix_key",
+    500: "stem_number",
+    501: "log_number",
+    201: "diameter_top_ob",
+    202: "diameter_top_ub",
+    203: "diameter_mid_ob",
+    204: "diameter_mid_ub",
+    205: "diameter_root_ob",
+    206: "diameter_root_ub",
+    300: "forced_cross_cut",
+    301: "length_actual_cm",
+    302: "length_class_cm",
+    400: "volume_m3_custom",
+    401: "volume_m3_sob",
+    402: "volume_m3_sub",
+    403: "volume_m3_top_ob",
+    404: "volume_m3_top_ub",
+    420: "volume_dl_custom",
+    421: "volume_dl_sob",
+    422: "volume_dl_sub",
+    220: "bunch_diameter_top",
+    303: "bunch_length",
+    407: "bunch_volume_m3_sob",
+    510: "bunch_sequence_id",
+    511: "bunch_index",
+    207: "diameter_unknown_1",
+    208: "diameter_unknown_2"
+}
 
 class PRIParser:
     """Parses Production-individual (PRI) files"""
@@ -534,12 +567,52 @@ class PRIParser:
         
         return pd.DataFrame(additional_data)
 
+    def _parse_logs(self):
+        """Parse individual log data into a DataFrame."""
+        num_log_codes = self._get_value(255, 1, '0')
+        log_codes_str = self._get_value(256, 1, '')
+        log_data_str = self._get_value(257, 1, '')
+        num_logs = self._get_value(290, 2, '0')
+        
+        if not log_codes_str or not log_data_str:
+            return pd.DataFrame()
+        
+        try:
+            num_log_codes_int = int(num_log_codes) if num_log_codes.isdigit() else 0
+            num_logs_int = int(num_logs) if num_logs.isdigit() else 0
+            
+            if num_log_codes_int == 0 or num_logs_int == 0:
+                return pd.DataFrame()
+            
+            log_codes = self._parse_list(log_codes_str, int)
+            log_data = self._parse_list(log_data_str, int)
+            
+            if len(log_codes) != num_log_codes_int:
+                return pd.DataFrame()
+            
+            expected_data_length = num_logs_int * num_log_codes_int
+            if len(log_data) != expected_data_length:
+                return pd.DataFrame()
+            
+            column_names = []
+            for code in log_codes:
+                column_name = PRI_LOG_CODES.get(code, f"unknown_code_{code}")
+                column_names.append(column_name)
+            
+            log_array = np.array(log_data).reshape(num_logs_int, num_log_codes_int)
+            logs_df = pd.DataFrame(log_array, columns=column_names)
+            
+            return logs_df
+            
+        except (ValueError, IndexError) as e:
+            return pd.DataFrame()
+
     def parse(self):
         """
         Parses the PRI file and returns a dictionary containing DataFrames:
         'header', 'machine', 'objects', 'buyer_vendor', 'calibration', 'apt_history',
         'species_groups', 'products', 'price_matrices', 'operators', 'production_statistics',
-        'log_codes', 'tree_codes', 'additional_info'.
+        'log_codes', 'tree_codes', 'additional_info', 'logs'.
         """
         self._load_raw_data()
         
@@ -557,7 +630,8 @@ class PRIParser:
             'production_statistics': self._parse_production_statistics(),
             'log_codes': self._parse_log_codes(),
             'tree_codes': self._parse_tree_codes(),
-            'additional_info': self._parse_additional_info()
+            'additional_info': self._parse_additional_info(),
+            'logs': self._parse_logs()
         }
 
     def visualize(self, data=None):

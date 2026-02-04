@@ -147,7 +147,7 @@ def merge_prd_pri_data(prd_data, pri_data):
     # Add all PRI-specific production-individual data
     for key in ['buyer_vendor', 'calibration', 'apt_history', 'price_matrices', 
                 'operators', 'production_statistics', 'log_codes', 'tree_codes', 
-                'additional_info']:
+                'additional_info', 'logs']:
         if key in pri_data:
             merged_data[key] = pri_data[key]
     
@@ -178,7 +178,8 @@ def visualize_data(data, file_type, has_pri=False):
             "🔧 Calibration",
             "📊 Production Statistics",
             "👤 Operators",
-            "📋 Additional Info"
+            "📋 Additional Info",
+            "📏 Logs"
         ])
     
     tabs = st.tabs(tab_names)
@@ -189,6 +190,7 @@ def visualize_data(data, file_type, has_pri=False):
     tab_prod_stats = tabs[8] if len(tabs) > 8 else None
     tab_operators = tabs[9] if len(tabs) > 9 else None
     tab_additional = tabs[10] if len(tabs) > 10 else None
+    tab_pri_logs = tabs[11] if len(tabs) > 11 else None
     
     # TAB 1: Overview
     with tab1:
@@ -572,6 +574,66 @@ def visualize_data(data, file_type, has_pri=False):
                     st.dataframe(data['additional_info'], use_container_width=True)
                 else:
                     st.info("Additional info data is missing.")
+        
+        # Logs tab
+        if tab_pri_logs is not None and 'logs' in data:
+            with tab_pri_logs:
+                st.header("Individual Logs")
+                if not data['logs'].empty:
+                    logs_df = data['logs']
+                    
+                    st.write(f"**Total Logs:** {len(logs_df):,}")
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Unique Stems", logs_df['stem_number'].nunique() if 'stem_number' in logs_df.columns else 0)
+                    with col2:
+                        st.metric("Unique Species", logs_df['species_index'].nunique() if 'species_index' in logs_df.columns else 0)
+                    with col3:
+                        st.metric("Unique Assortments", logs_df['assortment_index'].nunique() if 'assortment_index' in logs_df.columns else 0)
+                    
+                    st.subheader("Logs DataFrame")
+                    
+                    if len(logs_df) > 1000:
+                        st.info(f"Showing first 1,000 of {len(logs_df):,} logs. Use filters to narrow down results.")
+                        display_df = logs_df.head(1000)
+                    else:
+                        display_df = logs_df
+                    
+                    st.dataframe(display_df, use_container_width=True, height=400)
+                    
+                    if 'volume_dl_sob' in logs_df.columns:
+                        st.subheader("Volume Statistics")
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            total_volume = logs_df['volume_dl_sob'].sum() / 10000
+                            st.metric("Total Volume (m³ s.o.b.)", f"{total_volume:,.2f}")
+                        with col2:
+                            avg_volume = logs_df['volume_dl_sob'].mean() / 10000
+                            st.metric("Average Log Volume (m³ s.o.b.)", f"{avg_volume:.4f}")
+                    
+                    if 'length_actual_cm' in logs_df.columns:
+                        st.subheader("Length Statistics")
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Min Length (cm)", f"{logs_df['length_actual_cm'].min():.0f}")
+                        with col2:
+                            st.metric("Max Length (cm)", f"{logs_df['length_actual_cm'].max():.0f}")
+                        with col3:
+                            st.metric("Avg Length (cm)", f"{logs_df['length_actual_cm'].mean():.1f}")
+                    
+                    if 'diameter_top_ob' in logs_df.columns and 'diameter_root_ob' in logs_df.columns:
+                        st.subheader("Diameter Statistics")
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Avg Top Diameter (mm)", f"{logs_df['diameter_top_ob'].mean():.0f}")
+                        with col2:
+                            st.metric("Avg Root Diameter (mm)", f"{logs_df['diameter_root_ob'].mean():.0f}")
+                        with col3:
+                            if 'diameter_mid_ob' in logs_df.columns:
+                                st.metric("Avg Mid Diameter (mm)", f"{logs_df['diameter_mid_ob'].mean():.0f}")
+                else:
+                    st.info("Logs data is missing.")
 
 # Validate PRI file upload (cannot be provided alone)
 if uploaded_pri_file is not None and uploaded_file is None:
@@ -620,9 +682,11 @@ if uploaded_file is not None:
                 pri_data = pri_parser.parse()
                 has_pri = True
                 
-                # Merge PRD and PRI data
+                # Merge PRD and PRI data (including logs)
                 if file_type == 'prd':
                     data = merge_prd_pri_data(data, pri_data)
+                else:
+                    data.update(pri_data)
         
         st.success("File successfully parsed!")
         
