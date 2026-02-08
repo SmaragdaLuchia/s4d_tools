@@ -3,12 +3,13 @@ import pandas as pd
 import sys
 import os
 
-# Add parent directory to path to import parsers
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Ensure project root is on path when running from streamlit/
+_here = os.path.dirname(os.path.abspath(__file__))
+_root = os.path.dirname(_here)
+if _root not in sys.path:
+    sys.path.insert(0, _root)
 
-from stanford_parser.stanford_classic.prd_parser import PRDParser
-from stanford_parser.stanford_classic.pri_parser import PRIParser
-from stanford_parser.stanford_2010.hpr_parser import HPRParser
+from s4d_tools import PRDParser, PRIParser, HPRParser
 
 # Page configuration
 st.set_page_config(

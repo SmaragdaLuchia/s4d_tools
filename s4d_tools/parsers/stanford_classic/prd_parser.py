@@ -1,5 +1,5 @@
 import pandas as pd
-from .._utils import format_date
+from s4d_tools.utils.date_utils import format_date
 from .constants import DEFAULT_ENCODING, BLOCK_SEPARATOR
 
 class PRDParser:
