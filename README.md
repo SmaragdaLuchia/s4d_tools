@@ -23,7 +23,7 @@ A web-based visualization tool for analyzing StanForD (Standard for Forest Data)
 
 ```bash
 git clone <repository-url>
-cd stanford_parser
+cd s4d_tools
 ```
 
 ### Step 2: Create a Virtual Environment
