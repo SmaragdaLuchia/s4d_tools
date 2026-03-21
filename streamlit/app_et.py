@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import sys
 import os
+from typing import Optional
 
 # Ensure project root is on path when running from streamlit/
 _here = os.path.dirname(os.path.abspath(__file__))
@@ -10,6 +11,12 @@ if _root not in sys.path:
     sys.path.insert(0, _root)
 
 from s4d_tools import PRDParser, PRIParser, HPRParser
+from s4d_tools.transformers import (
+    merge_pri_into_standardized,
+    transform_hpr_to_standardized,
+    transform_prd_to_standardized,
+)
+from s4d_tools.transformers.standradized_schema import META_HAS_PRI, META_SOURCE_TYPE
 
 # Page configuration
 st.set_page_config(
@@ -27,174 +34,136 @@ st.write("**Märkus:** PRI (Production-individual) faili saab laadida koos PRD f
 uploaded_file = st.file_uploader("Lohista PRD või HPR fail siia", type=['prd', 'hpr'])
 uploaded_pri_file = st.file_uploader("Lohista PRI fail siia (valikuline, peab tulema koos PRD failiga)", type=['pri'])
 
-def calculate_hpr_statistics(hpr_data):
-    """
-    Calculate statistics from HPR data to match PRD statistics structure.
-    Returns a statistics DataFrame with the same structure as PRD.
-    """
-    statistics_data = {}
-    
-    # Total stems
-    total_stems = len(hpr_data['stems']) if not hpr_data['stems'].empty else 0
-    statistics_data['total_stems'] = total_stems
-    
-    # Calculate stems per species
-    if not hpr_data['stems'].empty:
-        # Count stems per species
-        stems_per_species_counts = hpr_data['stems'].groupby('species_group_key').size()
-        
-        # Get species names in order from species_groups
-        species_names = []
-        stems_counts = []
-        volume_per_species = []
-        
-        if not hpr_data['species_groups'].empty:
-            species_groups = hpr_data['species_groups']
-            
-            # Join logs with stems to get species_group_key for volume calculation
-            logs_with_stems = None
-            if not hpr_data['logs'].empty:
-                logs_with_stems = hpr_data['logs'].merge(
-                    hpr_data['stems'][['stem_key', 'species_group_key']],
-                    on='stem_key',
-                    how='left'
-                )
-            
-            for _, species in species_groups.iterrows():
-                species_key = species.get('species_group_key', '')
-                if species_key:
-                    species_name = species.get('species_group_name', '')
-                    count = int(stems_per_species_counts.get(species_key, 0))
-                    
-                    species_names.append(species_name if species_name else species_key)
-                    stems_counts.append(count)
-                    
-                    # Calculate volume for this species
-                    if logs_with_stems is not None and not logs_with_stems.empty:
-                        species_logs = logs_with_stems[logs_with_stems['species_group_key'] == species_key]
-                        if not species_logs.empty:
-                            # Convert volume to numeric (m³), then to raw units (multiply by 100)
-                            volumes = pd.to_numeric(species_logs['volume_sob_m3'].replace('', '0'), errors='coerce').fillna(0)
-                            total_volume_m3 = volumes.sum()
-                            total_volume_raw = int(total_volume_m3 * 100)  # Convert m³ to raw units (like PRD)
-                            volume_per_species.append(total_volume_raw)
-                        else:
-                            volume_per_species.append(0)
-                    else:
-                        volume_per_species.append(0)
-        else:
-            # If no species_groups, use unique species_group_keys from stems
-            unique_species_keys = hpr_data['stems']['species_group_key'].unique()
-            for species_key in unique_species_keys:
-                if species_key:
-                    species_names.append(species_key)
-                    stems_counts.append(int(stems_per_species_counts.get(species_key, 0)))
-                    volume_per_species.append(0)  # Can't calculate volume without species_groups
-        
-        # Ensure all lists have the same length
-        if species_names:
-            reference_length = len(species_names)
-            stems_counts = (stems_counts + [0] * (reference_length - len(stems_counts)))[:reference_length]
-            volume_per_species = (volume_per_species + [0] * (reference_length - len(volume_per_species)))[:reference_length]
-        
-        statistics_data['species_names'] = species_names
-        statistics_data['stems_per_species'] = stems_counts
-        statistics_data['volume_per_species'] = volume_per_species
+def _standardized_source_label_et(source_type: str) -> str:
+    if source_type == "stanford_2010_hpr":
+        return "Stanford 2010 (HPR)"
+    if source_type == "classic_prd":
+        return "Klassikaline PRD"
+    return source_type or "Teadmata"
+
+
+def _render_pri_style_logs_table_et(logs_df: pd.DataFrame) -> None:
+    st.write(f"**Palke kokku:** {len(logs_df):,}")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric(
+            "Unikaalsed tüved",
+            logs_df["stem_number"].nunique() if "stem_number" in logs_df.columns else 0,
+        )
+    with col2:
+        st.metric(
+            "Unikaalsed liigid",
+            logs_df["species_index"].nunique() if "species_index" in logs_df.columns else 0,
+        )
+    with col3:
+        st.metric(
+            "Unikaalsed sortimendid",
+            logs_df["assortment_index"].nunique() if "assortment_index" in logs_df.columns else 0,
+        )
+
+    st.subheader("Palgid (DataFrame)")
+
+    if len(logs_df) > 1000:
+        st.info(f"Näidatakse esimesed 1 000 rida {len(logs_df):,}-st.")
+        display_df = logs_df.head(1000)
     else:
-        statistics_data['species_names'] = []
-        statistics_data['stems_per_species'] = []
-        statistics_data['volume_per_species'] = []
-    
-    return pd.DataFrame([statistics_data])
+        display_df = logs_df
 
-def merge_prd_pri_data(prd_data, pri_data):
-    """
-    Merge PRD and PRI data. PRI data (production-individual) complements PRD data.
-    Returns merged data dictionary.
-    """
-    merged_data = prd_data.copy()
-    
-    # Merge header - PRI may have additional fields
-    if 'header' in pri_data and not pri_data['header'].empty:
-        pri_header = pri_data['header'].iloc[0]
-        if 'header' in merged_data and not merged_data['header'].empty:
-            # Update with PRI header info if PRD header is missing some fields
-            prd_header = merged_data['header'].iloc[0]
-            for key, value in pri_header.items():
-                if key not in prd_header or (prd_header[key] == '' and value != ''):
-                    merged_data['header'].iloc[0][key] = value
-    
-    # Merge machine - PRI may have additional fields
-    if 'machine' in pri_data and not pri_data['machine'].empty:
-        pri_machine = pri_data['machine'].iloc[0]
-        if 'machine' in merged_data and not merged_data['machine'].empty:
-            prd_machine = merged_data['machine'].iloc[0]
-            for key, value in pri_machine.items():
-                if key not in prd_machine or (prd_machine[key] == '' and value != ''):
-                    merged_data['machine'].iloc[0][key] = value
-    
-    # Merge objects - PRI may have additional fields like operator_id
-    if 'objects' in pri_data and not pri_data['objects'].empty:
-        pri_objects = pri_data['objects'].iloc[0]
-        if 'objects' in merged_data and not merged_data['objects'].empty:
-            prd_objects = merged_data['objects'].iloc[0]
-            for key, value in pri_objects.items():
-                if key not in prd_objects or (prd_objects[key] == '' and value != ''):
-                    merged_data['objects'].iloc[0][key] = value
-    
-    # Species groups and products should be the same, but PRI may have additional info
-    # We'll keep PRD's version as it has production statistics
-    
-    # Add all PRI-specific production-individual data
-    for key in ['buyer_vendor', 'calibration', 'apt_history', 'price_matrices', 
-                'operators', 'production_statistics', 'log_codes', 'tree_codes', 
-                'additional_info']:
-        if key in pri_data:
-            merged_data[key] = pri_data[key]
-    
-    return merged_data
+    st.dataframe(display_df, use_container_width=True, height=400)
 
-def visualize_data(data, file_type, has_pri=False):
+    if "volume_dl_sob" in logs_df.columns:
+        st.subheader("Mahu statistika")
+        col1, col2 = st.columns(2)
+        with col1:
+            total_volume = logs_df["volume_dl_sob"].sum() / 10000
+            st.metric("Kogumaht (m³ s.o.b.)", f"{total_volume:,.2f}")
+        with col2:
+            avg_volume = logs_df["volume_dl_sob"].mean() / 10000
+            st.metric("Keskmine palgi maht (m³ s.o.b.)", f"{avg_volume:.4f}")
+
+    if "length_actual_cm" in logs_df.columns:
+        st.subheader("Pikkuse statistika")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Min pikkus (cm)", f"{logs_df['length_actual_cm'].min():.0f}")
+        with col2:
+            st.metric("Max pikkus (cm)", f"{logs_df['length_actual_cm'].max():.0f}")
+        with col3:
+            st.metric("Keskm pikkus (cm)", f"{logs_df['length_actual_cm'].mean():.1f}")
+
+    if "diameter_top_ob" in logs_df.columns and "diameter_root_ob" in logs_df.columns:
+        st.subheader("Läbimõõdu statistika")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Keskm. ülemine Ø (mm)", f"{logs_df['diameter_top_ob'].mean():.0f}")
+        with col2:
+            st.metric("Keskm. juure Ø (mm)", f"{logs_df['diameter_root_ob'].mean():.0f}")
+        with col3:
+            if "diameter_mid_ob" in logs_df.columns:
+                st.metric("Keskm. kesk-Ø (mm)", f"{logs_df['diameter_mid_ob'].mean():.0f}")
+
+
+def _render_generic_logs_table_et(logs_df: pd.DataFrame, max_rows: int = 5000) -> None:
+    st.write(f"**Ridu:** {len(logs_df):,}")
+    if len(logs_df) > max_rows:
+        st.info(f"Näidatakse esimesed {max_rows:,} rida.")
+        st.dataframe(logs_df.head(max_rows), use_container_width=True, height=400)
+    else:
+        st.dataframe(logs_df, use_container_width=True, height=400)
+
+
+def _looks_like_pri_production_logs(df: pd.DataFrame) -> bool:
+    return "stem_number" in df.columns
+
+
+def visualize_data(data: dict, has_pri: Optional[bool] = None) -> None:
     """
-    Unified visualization function for PRD, HPR, and PRD+PRI data.
+    Standardiseeritud aruande visualiseerimine. Vahekaartide järjekord on sama
+    klassikalise PRD ja Stanford 2010 (HPR) jaoks.
     """
-    # For HPR, calculate statistics to match PRD structure
-    if file_type == 'hpr':
-        data['statistics'] = calculate_hpr_statistics(data)
-    
-    # Create tabs for different sections
+    if has_pri is None:
+        has_pri = bool(data.get(META_HAS_PRI, False))
+    else:
+        has_pri = bool(has_pri)
+
+    source_type = data.get(META_SOURCE_TYPE, "")
+
     tab_names = [
-        "📊 Ülevaade", 
-        "📋 Põhiinfo", 
-        "🌳 Liigid", 
-        "📦 Tooted", 
+        "📊 Ülevaade",
+        "📋 Põhiinfo",
+        "🌳 Liigid",
+        "📦 Tooted",
         "📈 Statistika",
-        "🔧 Masin"
+        "🔧 Masin",
+        "🌲 Puid",
+        "📏 Palgid",
     ]
-    
-    # Add PRI tabs if PRI data is available
     if has_pri:
-        tab_names.extend([
-            "👥 Ostud/Müüjad",
-            "🔧 Kalibreerimine",
-            "📊 Tootmise statistika",
-            "👤 Operaatorid",
-            "📋 Lisainfo"
-        ])
-    
+        tab_names.append("📋 Lisainfo")
+
     tabs = st.tabs(tab_names)
-    tab1, tab2, tab3, tab4, tab5, tab6 = tabs[0], tabs[1], tabs[2], tabs[3], tabs[4], tabs[5]
-    # PRI tabs
-    tab_buyer_vendor = tabs[6] if len(tabs) > 6 else None
-    tab_calibration = tabs[7] if len(tabs) > 7 else None
-    tab_prod_stats = tabs[8] if len(tabs) > 8 else None
-    tab_operators = tabs[9] if len(tabs) > 9 else None
-    tab_additional = tabs[10] if len(tabs) > 10 else None
+    (
+        tab1,
+        tab2,
+        tab3,
+        tab4,
+        tab5,
+        tab6,
+        tab_stems,
+        tab_logs,
+    ) = tabs[0], tabs[1], tabs[2], tabs[3], tabs[4], tabs[5], tabs[6], tabs[7]
+
+    tab_additional = tabs[8] if has_pri and len(tabs) > 8 else None
     
     # TAB 1: Overview
     with tab1:
         st.header("Ülevaade")
-        
+        pri_note = " · PRI liidetud" if has_pri else ""
+        st.caption(
+            f"Standardiseeritud aruanne · {_standardized_source_label_et(source_type)}{pri_note}"
+        )
+
         col1, col2, col3, col4 = st.columns(4)
         
         # Total stems
@@ -358,137 +327,57 @@ def visualize_data(data, file_type, has_pri=False):
             st.dataframe(data['machine'], use_container_width=True)
         else:
             st.info("Masina andmed puuduvad.")
-    
-    # Additional tabs for HPR-specific data
-    if file_type == 'hpr':
-        tab7, tab8 = st.tabs(["🌲 Puid", "📏 Palgid"])
-        
-        with tab7:
-            st.header("Puid (Stems)")
-            if 'stems' in data and not data['stems'].empty:
-                st.dataframe(data['stems'], use_container_width=True)
-            else:
-                st.info("Puid andmed puuduvad.")
-        
-        with tab8:
-            st.header("Palgid (Logs)")
-            if 'logs' in data and not data['logs'].empty:
-                st.dataframe(data['logs'], use_container_width=True)
-            else:
-                st.info("Palgid andmed puuduvad.")
-    
-    # PRI-specific tabs for production-individual data
+
+    with tab_stems:
+        st.header("Puid")
+        st.caption(
+            "Tüve taseme read on Stanford 2010 (HPR) failis. "
+            "Klassikalise PRD standardiseeritud väljundis puudub tüvetabel."
+        )
+        if "stems" in data and not data["stems"].empty:
+            st.dataframe(data["stems"], use_container_width=True)
+        else:
+            st.info("Selles aruandes pole tüve taseme ridu.")
+
+    with tab_logs:
+        st.header("Palgid")
+        logs_main = data.get("logs")
+        logs_pri_only = data.get("logs_pri")
+        if logs_main is None or (hasattr(logs_main, "empty") and logs_main.empty):
+            logs_main = pd.DataFrame()
+        if logs_pri_only is None or (
+            hasattr(logs_pri_only, "empty") and logs_pri_only.empty
+        ):
+            logs_pri_only = pd.DataFrame()
+
+        if logs_main.empty and logs_pri_only.empty:
+            st.info(
+                "Palgi taseme ridu pole. Klassikaline PRD sisaldab kokkuvõtet; "
+                "kasuta HPR-i või lisa PRI palgiandmete jaoks."
+            )
+        else:
+            if not logs_main.empty:
+                st.subheader("Peamine palgitable")
+                st.caption(
+                    "Masina/aruanne palgid (nt HPR) või PRI palgid, kui teist tabelit pole."
+                )
+                if _looks_like_pri_production_logs(logs_main):
+                    _render_pri_style_logs_table_et(logs_main)
+                else:
+                    _render_generic_logs_table_et(logs_main)
+
+            if not logs_pri_only.empty:
+                st.subheader("PRI tootmis-palgid")
+                st.caption(
+                    "Kui PRI palgid liidetakse teise palgitable kõrvale (nt HPR + PRI)."
+                )
+                if _looks_like_pri_production_logs(logs_pri_only):
+                    _render_pri_style_logs_table_et(logs_pri_only)
+                else:
+                    _render_generic_logs_table_et(logs_pri_only)
+
+    # PRI: ainult Lisainfo (ostjad/müüjad, kalibreerimine, tootmise statistika, operaatorid eemaldatud)
     if has_pri:
-        # Buyer/Vendor tab
-        if tab_buyer_vendor is not None and 'buyer_vendor' in data:
-            with tab_buyer_vendor:
-                st.header("Ostjad ja müüjad")
-                if not data['buyer_vendor'].empty:
-                    bv = data['buyer_vendor'].iloc[0]
-                    
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.subheader("Ostja")
-                        st.write(f"**Tekst:** {bv.get('buyer_text', 'N/A')}")
-                        st.write(f"**Maatriks tekst:** {bv.get('buyer_matrix_text', 'N/A')}")
-                        
-                        st.subheader("Tarnija")
-                        st.write(f"**Kood:** {bv.get('vendor_code', 'N/A')}")
-                        st.write(f"**Nimi:** {bv.get('vendor_name', 'N/A')}")
-                        st.write(f"**Aadress:** {bv.get('vendor_address', 'N/A')}")
-                        st.write(f"**E-post:** {bv.get('vendor_email', 'N/A')}")
-                        st.write(f"**Telefon:** {bv.get('vendor_phone', 'N/A')}")
-                    
-                    with col2:
-                        st.subheader("Alamleping")
-                        st.write(f"**Kood:** {bv.get('subcontractor_code', 'N/A')}")
-                        st.write(f"**Nimi:** {bv.get('subcontractor_name', 'N/A')}")
-                        st.write(f"**Aadress:** {bv.get('subcontractor_address', 'N/A')}")
-                        st.write(f"**E-post:** {bv.get('subcontractor_email', 'N/A')}")
-                        st.write(f"**Telefon:** {bv.get('subcontractor_phone', 'N/A')}")
-                    
-                    st.subheader("Buyer/Vendor DataFrame")
-                    st.dataframe(data['buyer_vendor'], use_container_width=True)
-                else:
-                    st.info("Ostjate/müüjate andmed puuduvad.")
-        
-        # Calibration tab
-        if tab_calibration is not None and 'calibration' in data:
-            with tab_calibration:
-                st.header("Kalibreerimise andmed")
-                if not data['calibration'].empty:
-                    cal = data['calibration'].iloc[0]
-                    
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.subheader("Pikkuse kalibreerimine")
-                        st.write(f"**Kalibreerimiste arv:** {cal.get('num_length_calibrations', 0)}")
-                        st.write(f"**Pikkuse positsioonid (cm):** {cal.get('length_positions_cm', [])[:10]}...")
-                        st.write(f"**Pikkuse korrektsioonid (mm):** {cal.get('length_corrections_mm', [])[:10]}...")
-                    
-                    with col2:
-                        st.subheader("Läbimõõdu kalibreerimine")
-                        st.write(f"**Kalibreerimiste arv:** {cal.get('num_diameter_calibrations', 0)}")
-                        st.write(f"**Läbimõõdu positsioonid (mm):** {cal.get('diameter_positions_mm', [])[:10]}...")
-                        st.write(f"**Läbimõõdu korrektsioonid (mm):** {cal.get('diameter_corrections_mm', [])[:10]}...")
-                    
-                    st.subheader("Calibration DataFrame")
-                    st.dataframe(data['calibration'], use_container_width=True)
-                else:
-                    st.info("Kalibreerimise andmed puuduvad.")
-        
-        # Production statistics tab
-        if tab_prod_stats is not None and 'production_statistics' in data:
-            with tab_prod_stats:
-                st.header("Tootmise statistika")
-                if not data['production_statistics'].empty:
-                    stats = data['production_statistics'].iloc[0]
-                    
-                    col1, col2, col3, col4 = st.columns(4)
-                    
-                    col1.metric("Puid", stats.get('num_stems', 0))
-                    col2.metric("Palgid", stats.get('num_logs', 0))
-                    col3.metric("Kaetud vahemaa (km)", f"{stats.get('distance_covered_km', 0):.2f}")
-                    col4.metric("Mitme puu töötlemisi", stats.get('num_multi_tree_occasions', 0))
-                    
-                    st.subheader("Täpsem statistika")
-                    st.write(f"**Kokku puid (objektil):** {stats.get('total_stems_site', 0)}")
-                    st.write(f"**Kokku palgid (objektil):** {stats.get('total_logs_site', 0)}")
-                    st.write(f"**Mitme puu töödeldud puid:** {stats.get('num_multi_tree_stems', 0)}")
-                    st.write(f"**Kokkukogutud palgid:** {stats.get('estimated_logs_bunched', 0)}")
-                    
-                    # Volume per species
-                    volumes = stats.get('total_merchantable_volume_m3_ub', [])
-                    if volumes and isinstance(volumes, list) and len(volumes) > 0:
-                        st.subheader("Kaubalik maht liigiti (m³ u.b.)")
-                        if 'species_groups' in data and not data['species_groups'].empty:
-                            species_names = data['species_groups']['species_group_name'].tolist()
-                            min_len = min(len(species_names), len(volumes))
-                            if min_len > 0:
-                                volume_df = pd.DataFrame({
-                                    'Liik': species_names[:min_len],
-                                    'Maht (m³ u.b.)': volumes[:min_len]
-                                })
-                                st.dataframe(volume_df, use_container_width=True)
-                                st.bar_chart(volume_df.set_index('Liik'))
-                    
-                    st.subheader("Production Statistics DataFrame")
-                    st.dataframe(data['production_statistics'], use_container_width=True)
-                else:
-                    st.info("Tootmise statistika andmed puuduvad.")
-        
-        # Operators tab
-        if tab_operators is not None and 'operators' in data:
-            with tab_operators:
-                st.header("Operaatorid")
-                if not data['operators'].empty:
-                    st.dataframe(data['operators'], use_container_width=True)
-                else:
-                    st.info("Operaatorite andmed puuduvad.")
-        
-        # Additional info tab
         if tab_additional is not None and 'additional_info' in data:
             with tab_additional:
                 st.header("Lisainfo")
@@ -607,10 +496,12 @@ if uploaded_file is not None:
         with st.spinner(f"Parsin {file_extension.upper()} faili..."):
             if file_type == 'hpr':
                 parser = HPRParser(temp_file)
-                data = parser.parse_all()
+                parsed_data = parser.parse_all()
+                data = transform_hpr_to_standardized(parsed_data)
             else:
                 parser = PRDParser(temp_file)
-                data = parser.parse()
+                parsed_data = parser.parse()
+                data = transform_prd_to_standardized(parsed_data)
         
         # Parse PRI file if provided
         pri_data = None
@@ -621,14 +512,12 @@ if uploaded_file is not None:
                 pri_data = pri_parser.parse()
                 has_pri = True
                 
-                # Merge PRD and PRI data
-                if file_type == 'prd':
-                    data = merge_prd_pri_data(data, pri_data)
+                data = merge_pri_into_standardized(data, pri_data)
         
         st.success("Fail edukalt parsimist!")
         
-        # Visualize data
-        visualize_data(data, file_type, has_pri=has_pri)
+        # Visualize only the standardized transformation output
+        visualize_data(data, has_pri=has_pri)
         
         # Clean up temporary files
         if os.path.exists(temp_file):
