@@ -1,3 +1,3 @@
-from s4d_tools.parsers import PRDParser, PRIParser, HPRParser
+from s4d_tools.parsers import APTParser, PRDParser, PRIParser, HPRParser, PINParser
 
-__all__ = ["PRDParser", "PRIParser", "HPRParser"]
+__all__ = ["APTParser", "PRDParser", "PRIParser", "HPRParser", "PINParser"]

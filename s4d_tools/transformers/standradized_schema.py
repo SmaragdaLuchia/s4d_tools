@@ -1,11 +1,3 @@
-"""
-Standardized schema for StanForD report data.
-
-The transformation layer converts parser output (classic PRD/PRI or Stanford 2010 HPR)
-into this single shape so that visualization and downstream code do not depend on
-the source format.
-"""
-
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -68,12 +60,23 @@ STANDARDIZED_LOGS_COLUMNS = [
     "diameter_root_ob",
 ]
 
+STANDARDIZED_PRICING_COLUMNS = [
+    "Species_Name",
+    "Assortment_Name",
+    "Allowed_Grades_Bitmask",
+    "Diameter_Lower_mm",
+    "Diameter_Limit_mm",
+    "Length_Lower_cm",
+    "Length_Limit_cm",
+    "Relative_Value",
+]
+
 StandardizedReport = Dict[str, pd.DataFrame]
 
-META_SOURCE_TYPE = "source_type" #"classic_prd" | "stanford_2010_hpr"
-META_HAS_PRI = "has_pri"  # bool
+META_SOURCE_TYPE = "source_type"
+META_HAS_PRI = "has_pri"
 
-SOURCE_TYPES = ("classic_prd", "stanford_2010_hpr")
+SOURCE_TYPES = ("classic_prd", "stanford_2010_hpr", "stanford_2010_pin", "classic_apt")
 
 
 def empty_standardized_table(columns: List[str]) -> pd.DataFrame:
@@ -81,7 +84,7 @@ def empty_standardized_table(columns: List[str]) -> pd.DataFrame:
 
 
 def empty_standardized_report(source_type: str, has_pri: bool = False) -> Dict[str, Any]:
-   return {
+    return {
         "header": empty_standardized_table(STANDARDIZED_HEADER_COLUMNS),
         "machine": empty_standardized_table(STANDARDIZED_MACHINE_COLUMNS),
         "objects": empty_standardized_table(STANDARDIZED_OBJECTS_COLUMNS),
@@ -90,6 +93,7 @@ def empty_standardized_report(source_type: str, has_pri: bool = False) -> Dict[s
         "statistics": empty_standardized_table(STANDARDIZED_STATISTICS_COLUMNS),
         "stems": empty_standardized_table(STANDARDIZED_STEMS_COLUMNS),
         "logs": empty_standardized_table(STANDARDIZED_LOGS_COLUMNS),
+        "pricing_matrix": empty_standardized_table(STANDARDIZED_PRICING_COLUMNS),
         META_SOURCE_TYPE: source_type,
         META_HAS_PRI: has_pri,
     }

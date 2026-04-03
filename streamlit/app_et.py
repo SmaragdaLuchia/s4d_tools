@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import sys
 import os
-from typing import Optional
+from typing import Any, List, Optional, Tuple
 
 # Ensure project root is on path when running from streamlit/
 _here = os.path.dirname(os.path.abspath(__file__))
@@ -10,7 +10,8 @@ _root = os.path.dirname(_here)
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
-from s4d_tools import PRDParser, PRIParser, HPRParser
+from s4d_tools import APTParser, PRDParser, PRIParser, HPRParser
+from s4d_tools.aggregators.price_matrix import price_matrix_heatmaps_by_assortment
 from s4d_tools.transformers import (
     merge_pri_into_standardized,
     transform_hpr_to_standardized,
@@ -28,11 +29,17 @@ st.set_page_config(
 # Title and description
 st.title("🌲 Harvesteri Failide Analüüs")
 st.write("Lae üles oma .prd või .hpr failid, et näha statistikat ja analüüsi.")
-st.write("**Märkus:** PRI (Production-individual) faili saab laadida koos PRD failiga täiendava tootmise info saamiseks.")
+st.write(
+    "**Märkus:** PRI (Production-individual) saab lisada PRD-ga täiendava tootmise info jaoks. "
+    "Valikuline **APT** (mootmisjuhised) lisab suhtelised hinna/maatriksid."
+)
 
 # File upload
 uploaded_file = st.file_uploader("Lohista PRD või HPR fail siia", type=['prd', 'hpr'])
 uploaded_pri_file = st.file_uploader("Lohista PRI fail siia (valikuline, peab tulema koos PRD failiga)", type=['pri'])
+uploaded_apt_file = st.file_uploader(
+    "Lohista APT fail siia (valikuline, mootmis / hinna maatriks)", type=['apt']
+)
 
 def _standardized_source_label_et(source_type: str) -> str:
     if source_type == "stanford_2010_hpr":
@@ -117,7 +124,49 @@ def _looks_like_pri_production_logs(df: pd.DataFrame) -> bool:
     return "stem_number" in df.columns
 
 
-def visualize_data(data: dict, has_pri: Optional[bool] = None) -> None:
+def _render_price_matrix_tab_et(data: dict) -> None:
+    st.header("Hinna maatriks")
+    st.caption(
+        "Klassikaline StanForD **APT** suhteline väärtus (~162 sub 2). "
+        "Read on läbimõõdu × pikkuse lahtrid liigi ja sortimendi kaupa."
+    )
+    pm = data.get("pricing_matrix")
+    if pm is None or pm.empty:
+        st.info("Selles aruandes pole hinna maatriksi ridu.")
+        return
+
+    st.metric("Maatriksi ridu (lahtrid)", f"{len(pm):,}")
+    st.subheader("Pikk tabel")
+    st.dataframe(pm, use_container_width=True, height=360)
+
+    try:
+        heatmaps = price_matrix_heatmaps_by_assortment(pm)
+    except Exception as e:
+        st.warning(f"Sortimendi kaupa maatriseid ei saanud ehitada: {e}")
+        return
+
+    if not heatmaps:
+        return
+
+    st.subheader("Sortimendi kaupa maatriks (tabel)")
+    labels = [
+        f"{h['species_name']} — {h['assortment_name']}" for h in heatmaps
+    ]
+    choice = st.selectbox("Sortiment", labels, index=0)
+    idx = labels.index(choice)
+    h = heatmaps[idx]
+    st.dataframe(
+        h["relative_value_matrix"],
+        use_container_width=True,
+        height=min(520, 35 + 35 * len(h["relative_value_matrix"].index)),
+    )
+
+
+def visualize_data(
+    data: dict,
+    has_pri: Optional[bool] = None,
+    has_apt: bool = False,
+) -> None:
     """
     Standardiseeritud aruande visualiseerimine. Vahekaartide järjekord on sama
     klassikalise PRD ja Stanford 2010 (HPR) jaoks.
@@ -135,33 +184,39 @@ def visualize_data(data: dict, has_pri: Optional[bool] = None) -> None:
         "🌳 Liigid",
         "📦 Tooted",
         "📈 Statistika",
-        "🔧 Masin",
-        "🌲 Puid",
-        "📏 Palgid",
     ]
+    if has_apt:
+        tab_names.append("💰 Hinna maatriks")
+    tab_names.extend(
+        [
+            "🔧 Masin",
+            "🌲 Puid",
+            "📏 Palgid",
+        ]
+    )
     if has_pri:
         tab_names.append("📋 Lisainfo")
 
     tabs = st.tabs(tab_names)
-    (
-        tab1,
-        tab2,
-        tab3,
-        tab4,
-        tab5,
-        tab6,
-        tab_stems,
-        tab_logs,
-    ) = tabs[0], tabs[1], tabs[2], tabs[3], tabs[4], tabs[5], tabs[6], tabs[7]
-
-    tab_additional = tabs[8] if has_pri and len(tabs) > 8 else None
+    it = iter(tabs)
+    tab1 = next(it)
+    tab2 = next(it)
+    tab3 = next(it)
+    tab4 = next(it)
+    tab5 = next(it)
+    tab_price = next(it) if has_apt else None
+    tab6 = next(it)
+    tab_stems = next(it)
+    tab_logs = next(it)
+    tab_additional = next(it) if has_pri else None
     
     # TAB 1: Overview
     with tab1:
         st.header("Ülevaade")
         pri_note = " · PRI liidetud" if has_pri else ""
+        apt_note = " · APT hinna maatriks" if has_apt else ""
         st.caption(
-            f"Standardiseeritud aruanne · {_standardized_source_label_et(source_type)}{pri_note}"
+            f"Standardiseeritud aruanne · {_standardized_source_label_et(source_type)}{pri_note}{apt_note}"
         )
 
         col1, col2, col3, col4 = st.columns(4)
@@ -313,8 +368,12 @@ def visualize_data(data: dict, has_pri: Optional[bool] = None) -> None:
             st.dataframe(data['statistics'], use_container_width=True)
         else:
             st.info("Statistika andmed puuduvad.")
-    
-    # TAB 6: Machine
+
+    if has_apt and tab_price is not None:
+        with tab_price:
+            _render_price_matrix_tab_et(data)
+
+    # TAB Machine
     with tab6:
         st.header("Masina info")
         
@@ -468,6 +527,12 @@ if uploaded_pri_file is not None and uploaded_file is None:
     st.error("❌ PRI faili ei saa laadida ilma PRD failita. Palun lae esmalt PRD fail.")
     st.stop()
 
+if uploaded_apt_file is not None and uploaded_file is None:
+    st.error(
+        "❌ APT faili ei saa laadida ilma PRD või HPR failita. Palun lae esmalt põhiaruande fail."
+    )
+    st.stop()
+
 if uploaded_file is not None:
     st.success("Fail edukalt laetud!")
     st.write(f"**Faili nimi:** {uploaded_file.name}")
@@ -475,7 +540,11 @@ if uploaded_file is not None:
     if uploaded_pri_file is not None:
         st.success("PRI fail edukalt laetud!")
         st.write(f"**PRI faili nimi:** {uploaded_pri_file.name}")
-    
+
+    if uploaded_apt_file is not None:
+        st.success("APT fail edukalt laetud!")
+        st.write(f"**APT faili nimi:** {uploaded_apt_file.name}")
+
     # Determine file type
     file_extension = uploaded_file.name.split('.')[-1].lower()
     file_type = 'hpr' if file_extension == 'hpr' else 'prd'
@@ -490,19 +559,40 @@ if uploaded_file is not None:
         temp_pri_file = f"temp_pri_file.pri"
         with open(temp_pri_file, "wb") as f:
             f.write(uploaded_pri_file.getbuffer())
-    
+
+    temp_apt_file = None
+    if uploaded_apt_file is not None:
+        temp_apt_file = "temp_apt_file.apt"
+        with open(temp_apt_file, "wb") as f:
+            f.write(uploaded_apt_file.getbuffer())
+
     try:
-        # Parse main file based on type
+        has_apt = temp_apt_file is not None and os.path.exists(temp_apt_file)
+        apt_parse_result = None
+
         with st.spinner(f"Parsin {file_extension.upper()} faili..."):
             if file_type == 'hpr':
                 parser = HPRParser(temp_file)
                 parsed_data = parser.parse_all()
-                data = transform_hpr_to_standardized(parsed_data)
             else:
                 parser = PRDParser(temp_file)
                 parsed_data = parser.parse()
-                data = transform_prd_to_standardized(parsed_data)
-        
+
+        if has_apt:
+            with st.spinner("Parsin APT faili (hinna maatriks)..."):
+                apt_parse_result = APTParser(temp_apt_file).parse()
+
+        if file_type == 'hpr':
+            data = transform_hpr_to_standardized(
+                parsed_data,
+                apt_parse_result=apt_parse_result,
+            )
+        else:
+            data = transform_prd_to_standardized(
+                parsed_data,
+                apt_parse_result=apt_parse_result,
+            )
+
         # Parse PRI file if provided
         pri_data = None
         has_pri = False
@@ -511,20 +601,22 @@ if uploaded_file is not None:
                 pri_parser = PRIParser(temp_pri_file)
                 pri_data = pri_parser.parse()
                 has_pri = True
-                
+
                 data = merge_pri_into_standardized(data, pri_data)
-        
+
         st.success("Fail edukalt parsimist!")
-        
+
         # Visualize only the standardized transformation output
-        visualize_data(data, has_pri=has_pri)
-        
+        visualize_data(data, has_pri=has_pri, has_apt=has_apt)
+
         # Clean up temporary files
         if os.path.exists(temp_file):
             os.remove(temp_file)
         if temp_pri_file and os.path.exists(temp_pri_file):
             os.remove(temp_pri_file)
-    
+        if temp_apt_file and os.path.exists(temp_apt_file):
+            os.remove(temp_apt_file)
+
     except Exception as e:
         st.error(f"Viga faili parsimisel: {str(e)}")
         st.exception(e)
@@ -533,6 +625,8 @@ if uploaded_file is not None:
             os.remove(temp_file)
         if temp_pri_file and os.path.exists(temp_pri_file):
             os.remove(temp_pri_file)
+        if temp_apt_file and os.path.exists(temp_apt_file):
+            os.remove(temp_apt_file)
 
 else:
     st.info("👆 Palun lae üles PRD või HPR fail, et alustada analüüsi.")
