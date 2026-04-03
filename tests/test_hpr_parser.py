@@ -10,7 +10,8 @@ project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from stanford_parser.stanford_2010.hpr_parser import HPRParser
+from s4d_tools.parsers.stanford_2010.hpr_parser import HPRParser
+from s4d_tools.parsers.stanford_2010.utils import get_text
 
 
 class TestHPRParser:
@@ -179,14 +180,12 @@ class TestHPRParser:
     def test_get_text_helper(self, sample_hpr_file):
         parser = HPRParser(sample_hpr_file)
         header_node = parser.root.find('s:HarvestedProductionHeader', parser.ns)
-        
-        # Test that _get_text extracts text correctly
-        creation_date = parser._get_text(header_node, 's:CreationDate')
+
+        creation_date = get_text(header_node, 's:CreationDate', parser.ns)
         assert creation_date is not None
         assert isinstance(creation_date, str)
-        
-        # Test that _get_text returns empty string for non-existent tags
-        non_existent = parser._get_text(header_node, 's:NonExistentTag')
+
+        non_existent = get_text(header_node, 's:NonExistentTag', parser.ns)
         assert non_existent == ''
     
     def test_units_extraction(self, sample_hpr_file):

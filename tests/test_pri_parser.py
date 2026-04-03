@@ -7,7 +7,8 @@ project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from stanford_parser.stanford_classic.pri_parser import PRIParser
+from s4d_tools.parsers.stanford_classic.pri_parser import PRIParser
+from s4d_tools.parsers.stanford_classic.utils.helpers import parse_list, parse_multiline_list
 
 
 class TestPRIParser:
@@ -158,22 +159,18 @@ class TestPRIParser:
         assert parser._get_value(999, 999, 'default') == 'default'
         assert parser._get_value(999, 999) is None
     
-    def test_parse_list(self, sample_pri_file):
-        parser = PRIParser(sample_pri_file)
-        
-        assert parser._parse_list('1 2 3') == [1, 2, 3]
-        assert parser._parse_list('10 20 30', int) == [10, 20, 30]
-        assert parser._parse_list('1.5 2.5 3.5', float) == [1.5, 2.5, 3.5]
-        assert parser._parse_list('') == []
-        assert parser._parse_list(None) == []
-    
-    def test_parse_multiline_list(self, sample_pri_file):
-        parser = PRIParser(sample_pri_file)
-        
-        assert parser._parse_multiline_list('line1\nline2\nline3') == ['line1', 'line2', 'line3']
-        assert parser._parse_multiline_list('single') == ['single']
-        assert parser._parse_multiline_list('') == []
-        assert parser._parse_multiline_list(None) == []
+    def test_parse_list(self):
+        assert parse_list('1 2 3') == [1, 2, 3]
+        assert parse_list('10 20 30', int) == [10, 20, 30]
+        assert parse_list('1.5 2.5 3.5', float) == [1.5, 2.5, 3.5]
+        assert parse_list('') == []
+        assert parse_list(None) == []
+
+    def test_parse_multiline_list(self):
+        assert parse_multiline_list('line1\nline2\nline3') == ['line1', 'line2', 'line3']
+        assert parse_multiline_list('single') == ['single']
+        assert parse_multiline_list('') == []
+        assert parse_multiline_list(None) == []
     
     def test_invalid_file_path(self):
         parser = PRIParser("non_existent_file.pri")

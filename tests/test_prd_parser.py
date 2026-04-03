@@ -8,7 +8,7 @@ project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from stanford_parser.stanford_classic.prd_parser import PRDParser
+from s4d_tools.parsers.stanford_classic.prd_parser import PRDParser
 
 
 class TestPRDParser:
