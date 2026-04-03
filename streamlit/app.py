@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import sys
 import os
-from typing import Optional
+from typing import Any, List, Optional, Tuple
 
 # Ensure project root is on path when running from streamlit/
 _here = os.path.dirname(os.path.abspath(__file__))
@@ -10,13 +10,44 @@ _root = os.path.dirname(_here)
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
-from s4d_tools import PRDParser, PRIParser, HPRParser
+from s4d_tools import APTParser, PRDParser, PRIParser, HPRParser, PINParser
+from s4d_tools.aggregators.price_matrix import price_matrix_heatmaps_by_assortment
 from s4d_tools.transformers import (
+    merge_pin_into_standardized,
     merge_pri_into_standardized,
     transform_hpr_to_standardized,
     transform_prd_to_standardized,
 )
 from s4d_tools.transformers.standradized_schema import META_HAS_PRI, META_SOURCE_TYPE
+
+
+def _split_apt_pin_uploads(
+    files: Any,
+) -> Tuple[Optional[Any], Optional[Any], List[str]]:
+    """
+    From a single multi-file uploader (``.apt`` / ``.pin``), pick one APT and one PIN if present.
+    Returns (apt_file, pin_file, warning_messages).
+    """
+    if files is None:
+        return None, None, []
+    fl = files if isinstance(files, list) else [files]
+    apt_list = [f for f in fl if f.name.lower().endswith(".apt")]
+    pin_list = [f for f in fl if f.name.lower().endswith(".pin")]
+    warns: List[str] = []
+    if len(apt_list) > 1:
+        warns.append(
+            f"Multiple APT files uploaded — using **{apt_list[0].name}**; ignoring {len(apt_list) - 1} other(s)."
+        )
+    if len(pin_list) > 1:
+        warns.append(
+            f"Multiple PIN files uploaded — using **{pin_list[0].name}**; ignoring {len(pin_list) - 1} other(s)."
+        )
+    return (
+        apt_list[0] if apt_list else None,
+        pin_list[0] if pin_list else None,
+        warns,
+    )
+
 
 # Page configuration
 st.set_page_config(
@@ -28,11 +59,24 @@ st.set_page_config(
 # Title and description
 st.title("🌲 Harvester File Analysis")
 st.write("Upload your .prd or .hpr files to view statistics and analysis.")
-st.write("**Note:** PRI (Production-individual) file can be uploaded together with PRD file to get additional production information.")
+st.write(
+    "**Note:** PRI (Production-individual) can be added with PRD for more production detail. "
+    "Optional **APT** (classic bucking instructions) adds relative price matrices for PRD. "
+    "For **Stanford 2010 HPR**, optional **PIN** (Product Instruction XML) supplies the product price matrix. "
+    "You can upload **APT and/or PIN** in the same optional uploader below."
+)
 
 # File upload
 uploaded_file = st.file_uploader("Drag PRD or HPR file here", type=['prd', 'hpr'])
 uploaded_pri_file = st.file_uploader("Drag PRI file here (optional, must come with PRD file)", type=['pri'])
+uploaded_apt_pin = st.file_uploader(
+    "Drag APT and/or PIN here (optional — classic PRD bucking / HPR product price matrix)",
+    type=["apt", "pin"],
+    accept_multiple_files=True,
+)
+uploaded_apt_file, uploaded_pin_file, _apt_pin_upload_warnings = _split_apt_pin_uploads(
+    uploaded_apt_pin
+)
 
 def _standardized_source_label(source_type: str) -> str:
     """Human-readable label for META_SOURCE_TYPE."""
@@ -120,7 +164,53 @@ def _looks_like_pri_production_logs(df: pd.DataFrame) -> bool:
     return "stem_number" in df.columns
 
 
-def visualize_data(data: dict, has_pri: Optional[bool] = None) -> None:
+def _render_price_matrix_tab(data: dict) -> None:
+    st.header("Price matrix")
+    st.caption(
+        "Long-form **diameter × length** cells per species and assortment. "
+        "Classic **APT** sources use relative values; Stanford **2010 PIN** (with HPR) maps product matrix prices into the same table."
+    )
+    pm = data.get("pricing_matrix")
+    if pm is None or pm.empty:
+        st.info(
+            "No price matrix rows in this report. "
+            "For **Classic StanForD**, upload a tilde-separated `.apt` that contains group **162/2** "
+            "(relative price matrix). If you did upload an APT, try saving it as ISO-8859 / Windows "
+            "ANSI from your harvester software, or UTF-8 — the parser tries several encodings."
+        )
+        return
+
+    st.metric("Matrix rows (cells)", f"{len(pm):,}")
+    st.subheader("Long-form table")
+    st.dataframe(pm, use_container_width=True, height=360)
+
+    try:
+        heatmaps = price_matrix_heatmaps_by_assortment(pm)
+    except Exception as e:
+        st.warning(f"Could not build per-assortment matrices: {e}")
+        return
+
+    if not heatmaps:
+        return
+
+    st.subheader("Per-assortment matrix (heatmap table)")
+    labels = [
+        f"{h['species_name']} — {h['assortment_name']}" for h in heatmaps
+    ]
+    choice = st.selectbox("Assortment", labels, index=0)
+    idx = labels.index(choice)
+    h = heatmaps[idx]
+    st.dataframe(
+        h["relative_value_matrix"],
+        use_container_width=True,
+        height=min(520, 35 + 35 * len(h["relative_value_matrix"].index)),
+    )
+
+
+def visualize_data(
+    data: dict,
+    has_pri: Optional[bool] = None,
+) -> None:
     """
     Visualize the standardized report shape. Tab layout is identical for
     Classic PRD and Stanford 2010 HPR; optional PRI sections use the same tabs when present.
@@ -131,41 +221,48 @@ def visualize_data(data: dict, has_pri: Optional[bool] = None) -> None:
         has_pri = bool(has_pri)
 
     source_type = data.get(META_SOURCE_TYPE, "")
+    pm = data.get("pricing_matrix")
+    has_price_matrix = pm is not None and not getattr(pm, "empty", True)
 
-    # Fixed tab order for all source formats (standardized shape)
     tab_names = [
         "📊 Overview",
         "📋 Basic Info",
         "🌳 Species",
         "📦 Products",
         "📈 Statistics",
-        "🔧 Machine",
-        "🌲 Stems",
-        "📏 Logs",
     ]
+    if has_price_matrix:
+        tab_names.append("💰 Price matrix")
+    tab_names.extend(
+        [
+            "🔧 Machine",
+            "🌲 Stems",
+            "📏 Logs",
+        ]
+    )
     if has_pri:
         tab_names.append("📋 Additional Info")
 
     tabs = st.tabs(tab_names)
-    (
-        tab1,
-        tab2,
-        tab3,
-        tab4,
-        tab5,
-        tab6,
-        tab_stems,
-        tab_logs,
-    ) = tabs[0], tabs[1], tabs[2], tabs[3], tabs[4], tabs[5], tabs[6], tabs[7]
-
-    tab_additional = tabs[8] if has_pri and len(tabs) > 8 else None
+    it = iter(tabs)
+    tab1 = next(it)
+    tab2 = next(it)
+    tab3 = next(it)
+    tab4 = next(it)
+    tab5 = next(it)
+    tab_price = next(it) if has_price_matrix else None
+    tab6 = next(it)
+    tab_stems = next(it)
+    tab_logs = next(it)
+    tab_additional = next(it) if has_pri else None
     
     # TAB 1: Overview
     with tab1:
         st.header("Overview")
         pri_note = " · PRI merged" if has_pri else ""
+        price_note = " · Price matrix" if has_price_matrix else ""
         st.caption(
-            f"Standardized report · {_standardized_source_label(source_type)}{pri_note}"
+            f"Standardized report · {_standardized_source_label(source_type)}{pri_note}{price_note}"
         )
 
         col1, col2, col3, col4 = st.columns(4)
@@ -317,8 +414,12 @@ def visualize_data(data: dict, has_pri: Optional[bool] = None) -> None:
             st.dataframe(data['statistics'], use_container_width=True)
         else:
             st.info("Statistics data is missing.")
-    
-    # TAB 6: Machine
+
+    if has_price_matrix and tab_price is not None:
+        with tab_price:
+            _render_price_matrix_tab(data)
+
+    # TAB Machine
     with tab6:
         st.header("Machine Info")
         
@@ -474,6 +575,15 @@ if uploaded_pri_file is not None and uploaded_file is None:
     st.error("❌ PRI file cannot be uploaded without a PRD file. Please upload a PRD file first.")
     st.stop()
 
+if uploaded_file is None and uploaded_apt_pin is not None:
+    _n = len(uploaded_apt_pin) if isinstance(uploaded_apt_pin, list) else 1
+    if _n > 0:
+        st.error(
+            "❌ APT/PIN cannot be uploaded without a PRD or HPR file. "
+            "Please upload a main report file first."
+        )
+        st.stop()
+
 if uploaded_file is not None:
     st.success("File successfully uploaded!")
     st.write(f"**File Name:** {uploaded_file.name}")
@@ -481,7 +591,18 @@ if uploaded_file is not None:
     if uploaded_pri_file is not None:
         st.success("PRI file successfully uploaded!")
         st.write(f"**PRI File Name:** {uploaded_pri_file.name}")
-    
+
+    for w in _apt_pin_upload_warnings:
+        st.warning(w)
+
+    if uploaded_apt_file is not None:
+        st.success("APT file successfully uploaded!")
+        st.write(f"**APT File Name:** {uploaded_apt_file.name}")
+
+    if uploaded_pin_file is not None:
+        st.success("PIN file successfully uploaded!")
+        st.write(f"**PIN File Name:** {uploaded_pin_file.name}")
+
     # Determine file type
     file_extension = uploaded_file.name.split('.')[-1].lower()
     file_type = 'hpr' if file_extension == 'hpr' else 'prd'
@@ -496,19 +617,57 @@ if uploaded_file is not None:
         temp_pri_file = f"temp_pri_file.pri"
         with open(temp_pri_file, "wb") as f:
             f.write(uploaded_pri_file.getbuffer())
-    
+
+    temp_apt_file = None
+    if uploaded_apt_file is not None:
+        temp_apt_file = "temp_apt_file.apt"
+        with open(temp_apt_file, "wb") as f:
+            f.write(uploaded_apt_file.getbuffer())
+
+    temp_pin_file = None
+    if uploaded_pin_file is not None:
+        temp_pin_file = "temp_pin_file.pin"
+        with open(temp_pin_file, "wb") as f:
+            f.write(uploaded_pin_file.getbuffer())
+
     try:
-        # Parse main file based on type
+        has_apt = temp_apt_file is not None and os.path.exists(temp_apt_file)
+        apt_parse_result = None
+
         with st.spinner(f"Parsing {file_extension.upper()} file..."):
             if file_type == 'hpr':
                 parser = HPRParser(temp_file)
                 parsed_data = parser.parse_all()
-                data = transform_hpr_to_standardized(parsed_data)
             else:
                 parser = PRDParser(temp_file)
                 parsed_data = parser.parse()
-                data = transform_prd_to_standardized(parsed_data)
-        
+
+        if has_apt:
+            with st.spinner("Parsing APT file (price matrix)..."):
+                apt_parse_result = APTParser(temp_apt_file).parse()
+
+        if file_type == 'hpr':
+            data = transform_hpr_to_standardized(
+                parsed_data,
+                apt_parse_result=apt_parse_result,
+            )
+        else:
+            data = transform_prd_to_standardized(
+                parsed_data,
+                apt_parse_result=apt_parse_result,
+            )
+
+        if temp_pin_file is not None and os.path.exists(temp_pin_file):
+            if file_type != 'hpr':
+                st.warning(
+                    "PIN (Product Instruction) applies to Stanford 2010 HPR only; "
+                    "ignoring the PIN file for this PRD report."
+                )
+            else:
+                with st.spinner("Parsing PIN file (product / price matrix)..."):
+                    pin_data = PINParser(temp_pin_file).parse_all()
+                    data = merge_pin_into_standardized(data, pin_data)
+
         # Parse PRI file if provided
         pri_data = None
         has_pri = False
@@ -517,20 +676,24 @@ if uploaded_file is not None:
                 pri_parser = PRIParser(temp_pri_file)
                 pri_data = pri_parser.parse()
                 has_pri = True
-                
+
                 data = merge_pri_into_standardized(data, pri_data)
-        
+
         st.success("File successfully parsed!")
-        
+
         # Visualize only the standardized transformation output
         visualize_data(data, has_pri=has_pri)
-        
+
         # Clean up temporary files
         if os.path.exists(temp_file):
             os.remove(temp_file)
         if temp_pri_file and os.path.exists(temp_pri_file):
             os.remove(temp_pri_file)
-    
+        if temp_apt_file and os.path.exists(temp_apt_file):
+            os.remove(temp_apt_file)
+        if temp_pin_file and os.path.exists(temp_pin_file):
+            os.remove(temp_pin_file)
+
     except Exception as e:
         st.error(f"Error parsing file: {str(e)}")
         st.exception(e)
@@ -539,6 +702,10 @@ if uploaded_file is not None:
             os.remove(temp_file)
         if temp_pri_file and os.path.exists(temp_pri_file):
             os.remove(temp_pri_file)
+        if temp_apt_file and os.path.exists(temp_apt_file):
+            os.remove(temp_apt_file)
+        if temp_pin_file and os.path.exists(temp_pin_file):
+            os.remove(temp_pin_file)
 
 else:
     st.info("👆 Please upload a PRD or HPR file to start the analysis.")

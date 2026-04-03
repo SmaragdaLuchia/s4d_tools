@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Union
 
 import pandas as pd
 
+from .apt_pricematrix_normalization import price_matrix_from_any_apt_shape
 from .standradized_schema import (
+    STANDARDIZED_PRICING_COLUMNS,
     STANDARDIZED_HEADER_COLUMNS,
     STANDARDIZED_MACHINE_COLUMNS,
     STANDARDIZED_OBJECTS_COLUMNS,
@@ -14,117 +16,118 @@ from .standradized_schema import (
     STANDARDIZED_STEMS_COLUMNS,
     META_HAS_PRI,
     META_SOURCE_TYPE,
+    empty_standardized_report,
     empty_standardized_table,
 )
 
+# --- HELPER FUNCTIONS ---
 
 def _ensure_columns(df: pd.DataFrame, columns: list, fill_value: Any = "") -> pd.DataFrame:
-    for c in columns:
-        if c not in df.columns:
-            df = df.copy()
-            df[c] = fill_value
-    existing = [c for c in columns if c in df.columns]
-    return df[existing]
+    """Uses Pandas reindex for fast, memory-efficient column ensuring."""
+    return df.reindex(columns=columns, fill_value=fill_value)
 
+def _format_table(df_dict: Dict[str, pd.DataFrame], key: str, columns: list) -> pd.DataFrame:
+    """Helper to check for empty tables and apply _ensure_columns to reduce boilerplate."""
+    df = df_dict.get(key)
+    if df is None or df.empty:
+        return empty_standardized_table(columns)
+    return _ensure_columns(df.copy(), columns)
+
+def _merge_first_row(primary_df: pd.DataFrame, secondary_df: pd.DataFrame) -> pd.DataFrame:
+    """Safely merges primary and secondary row data without using .iloc mutation."""
+    if primary_df.empty or secondary_df.empty:
+        return primary_df
+
+    primary_nan = primary_df.replace("", pd.NA)
+    secondary_nan = secondary_df.replace("", pd.NA)
+    
+    merged = primary_nan.combine_first(secondary_nan)
+    return merged.fillna("")
 
 def _compute_hpr_statistics(hpr_data: Dict[str, pd.DataFrame]) -> pd.DataFrame:
-    stats = {
-        "total_stems": 0,
-        "species_names": [],
-        "stems_per_species": [],
-        "volume_per_species": [],
-    }
-    stems_df = hpr_data.get("stems")
-    logs_df = hpr_data.get("logs")
-    species_df = hpr_data.get("species_groups")
+    """Computes statistics using vectorized groupby and merge instead of iterrows."""
+    stems_df = hpr_data.get("stems", pd.DataFrame())
+    logs_df = hpr_data.get("logs", pd.DataFrame())
+    species_df = hpr_data.get("species_groups", pd.DataFrame())
 
-    if stems_df is None or stems_df.empty:
-        return pd.DataFrame([stats])
+    if stems_df.empty:
+        return pd.DataFrame([{
+            "total_stems": 0, "species_names": [], 
+            "stems_per_species": [], "volume_per_species": []
+        }])
 
-    total_stems = len(stems_df)
-    stats["total_stems"] = total_stems
+    # 1. Stems per species
+    stems_counts = stems_df.groupby("species_group_key").size().reset_index(name="stems_count")
 
-    stems_per_species_counts = stems_df.groupby("species_group_key").size()
-
-    if species_df is not None and not species_df.empty:
-        species_names = []
-        stems_counts = []
-        volume_per_species = []
-
-        logs_with_stems = None
-        if logs_df is not None and not logs_df.empty and "stem_key" in logs_df.columns:
-            logs_with_stems = logs_df.merge(
-                stems_df[["stem_key", "species_group_key"]],
-                on="stem_key",
-                how="left",
-            )
-
-        for _, row in species_df.iterrows():
-            sk = row.get("species_group_key", "")
-            if not sk:
-                continue
-            name = row.get("species_group_name", "") or sk
-            species_names.append(name)
-            stems_counts.append(int(stems_per_species_counts.get(sk, 0)))
-
-            vol = 0
-            if logs_with_stems is not None and "volume_sob_m3" in logs_with_stems.columns:
-                subset = logs_with_stems[logs_with_stems["species_group_key"] == sk]
-                if not subset.empty:
-                    vol_series = pd.to_numeric(subset["volume_sob_m3"].replace("", "0"), errors="coerce").fillna(0)
-                    vol = int(vol_series.sum() * 100)  # raw units like PRD
-            volume_per_species.append(vol)
-
-        stats["species_names"] = species_names
-        stats["stems_per_species"] = stems_counts
-        stats["volume_per_species"] = volume_per_species
+    # 2. Volume per species
+    if not logs_df.empty and "stem_key" in logs_df.columns:
+        logs_merged = logs_df.merge(stems_df[["stem_key", "species_group_key"]], on="stem_key", how="left")
+        logs_merged["volume_sob_m3"] = pd.to_numeric(logs_merged["volume_sob_m3"].replace("", "0"), errors="coerce").fillna(0)
+        logs_merged["volume"] = (logs_merged["volume_sob_m3"] * 100).astype(int)
+        vol_counts = logs_merged.groupby("species_group_key")["volume"].sum().reset_index()
     else:
-        for sk in stems_per_species_counts.index:
-            if sk:
-                stats["species_names"].append(sk)
-                stats["stems_per_species"].append(int(stems_per_species_counts.get(sk, 0)))
-                stats["volume_per_species"].append(0)
+        vol_counts = pd.DataFrame(columns=["species_group_key", "volume"])
 
-    return pd.DataFrame([stats])
+    # 3. Compile final statistics
+    if not species_df.empty:
+        stats_df = species_df[["species_group_key", "species_group_name"]].copy()
+        stats_df["species_group_name"] = stats_df["species_group_name"].replace("", pd.NA).fillna(stats_df["species_group_key"])
+    else:
+        stats_df = stems_counts[["species_group_key"]].copy()
+        stats_df["species_group_name"] = stats_df["species_group_key"]
+
+    stats_df = stats_df.merge(stems_counts, on="species_group_key", how="left").fillna({"stems_count": 0})
+    stats_df = stats_df.merge(vol_counts, on="species_group_key", how="left").fillna({"volume": 0})
+
+    return pd.DataFrame([{
+        "total_stems": len(stems_df),
+        "species_names": stats_df["species_group_name"].tolist(),
+        "stems_per_species": stats_df["stems_count"].astype(int).tolist(),
+        "volume_per_species": stats_df["volume"].astype(int).tolist(),
+    }])
 
 
-def transform_prd_to_standardized(prd_data: Dict[str, pd.DataFrame]) -> Dict[str, Any]:
-    out = {
-        "header": _ensure_columns(prd_data["header"].copy(), STANDARDIZED_HEADER_COLUMNS)
-        if not prd_data["header"].empty
-        else empty_standardized_table(STANDARDIZED_HEADER_COLUMNS),
-        "machine": _ensure_columns(prd_data["machine"].copy(), STANDARDIZED_MACHINE_COLUMNS)
-        if not prd_data["machine"].empty
-        else empty_standardized_table(STANDARDIZED_MACHINE_COLUMNS),
-        "objects": _ensure_columns(prd_data["objects"].copy(), STANDARDIZED_OBJECTS_COLUMNS)
-        if not prd_data["objects"].empty
-        else empty_standardized_table(STANDARDIZED_OBJECTS_COLUMNS),
-        "species_groups": _ensure_columns(
-            prd_data["species_groups"].copy(), STANDARDIZED_SPECIES_GROUPS_COLUMNS
-        )
-        if not prd_data["species_groups"].empty
-        else empty_standardized_table(STANDARDIZED_SPECIES_GROUPS_COLUMNS),
-        "products": _ensure_columns(prd_data["products"].copy(), STANDARDIZED_PRODUCTS_COLUMNS)
-        if not prd_data["products"].empty
-        else empty_standardized_table(STANDARDIZED_PRODUCTS_COLUMNS),
-        "statistics": _ensure_columns(
-            prd_data["statistics"].copy(), STANDARDIZED_STATISTICS_COLUMNS
-        )
-        if not prd_data["statistics"].empty
-        else empty_standardized_table(STANDARDIZED_STATISTICS_COLUMNS),
+def _standardized_pricing_matrix(
+    apt_parse_result: Optional[Union[Dict[str, Any], pd.DataFrame]],
+) -> pd.DataFrame:
+    """Classic APT parse output → standardized long-form ``pricing_matrix``; empty table if no APT."""
+    if apt_parse_result is None:
+        return empty_standardized_table(STANDARDIZED_PRICING_COLUMNS)
+    return _ensure_columns(
+        price_matrix_from_any_apt_shape(apt_parse_result).copy(),
+        STANDARDIZED_PRICING_COLUMNS,
+    )
+
+
+# --- TRANSFORMATION FUNCTIONS ---
+
+def transform_prd_to_standardized(
+    prd_data: Dict[str, pd.DataFrame],
+    apt_parse_result: Optional[Union[Dict[str, Any], pd.DataFrame]] = None,
+) -> Dict[str, Any]:
+    apt_df = _standardized_pricing_matrix(apt_parse_result)
+    return {
+        "header": _format_table(prd_data, "header", STANDARDIZED_HEADER_COLUMNS),
+        "machine": _format_table(prd_data, "machine", STANDARDIZED_MACHINE_COLUMNS),
+        "objects": _format_table(prd_data, "objects", STANDARDIZED_OBJECTS_COLUMNS),
+        "species_groups": _format_table(prd_data, "species_groups", STANDARDIZED_SPECIES_GROUPS_COLUMNS),
+        "products": _format_table(prd_data, "products", STANDARDIZED_PRODUCTS_COLUMNS),
+        "statistics": _format_table(prd_data, "statistics", STANDARDIZED_STATISTICS_COLUMNS),
         "stems": empty_standardized_table(STANDARDIZED_STEMS_COLUMNS),
         "logs": pd.DataFrame(),  # PRD has no logs; keep parser shape (empty)
+        "pricing_matrix": apt_df,
         META_SOURCE_TYPE: "classic_prd",
         META_HAS_PRI: False,
     }
-    return out
 
 
-def transform_hpr_to_standardized(hpr_data: Dict[str, pd.DataFrame]) -> Dict[str, Any]:
-    header = hpr_data["header"].copy() if not hpr_data["header"].empty else pd.DataFrame()
-    header = _ensure_columns(header, STANDARDIZED_HEADER_COLUMNS) if not header.empty else empty_standardized_table(STANDARDIZED_HEADER_COLUMNS)
-
-    objects_df = hpr_data["objects"]
+def transform_hpr_to_standardized(
+    hpr_data: Dict[str, pd.DataFrame],
+    apt_parse_result: Optional[Union[Dict[str, Any], pd.DataFrame]] = None,
+) -> Dict[str, Any]:
+    
+    # Process objects separately because it requires custom mapping before ensuring columns
+    objects_df = hpr_data.get("objects", pd.DataFrame())
     if not objects_df.empty:
         ob = objects_df.copy()
         if "object_name" not in ob.columns:
@@ -135,22 +138,8 @@ def transform_hpr_to_standardized(hpr_data: Dict[str, pd.DataFrame]) -> Dict[str
     else:
         objects_out = empty_standardized_table(STANDARDIZED_OBJECTS_COLUMNS)
 
-    species = (
-        _ensure_columns(hpr_data["species_groups"].copy(), STANDARDIZED_SPECIES_GROUPS_COLUMNS)
-        if not hpr_data["species_groups"].empty
-        else empty_standardized_table(STANDARDIZED_SPECIES_GROUPS_COLUMNS)
-    )
-
-    products = (
-        _ensure_columns(hpr_data["products"].copy(), STANDARDIZED_PRODUCTS_COLUMNS)
-        if not hpr_data["products"].empty
-        else empty_standardized_table(STANDARDIZED_PRODUCTS_COLUMNS)
-    )
-
-    statistics = _compute_hpr_statistics(hpr_data)
-    statistics = _ensure_columns(statistics, STANDARDIZED_STATISTICS_COLUMNS)
-
-    stems = hpr_data["stems"]
+    # Process stems separately to retain extra un-standardized columns
+    stems = hpr_data.get("stems", pd.DataFrame())
     if not stems.empty:
         stems_out = _ensure_columns(stems.copy(), STANDARDIZED_STEMS_COLUMNS)
         extra = [c for c in stems.columns if c not in STANDARDIZED_STEMS_COLUMNS]
@@ -159,26 +148,87 @@ def transform_hpr_to_standardized(hpr_data: Dict[str, pd.DataFrame]) -> Dict[str
     else:
         stems_out = empty_standardized_table(STANDARDIZED_STEMS_COLUMNS)
 
-    logs_out = hpr_data["logs"].copy() if not hpr_data["logs"].empty else pd.DataFrame()
+    # Compute statistics
+    statistics = _compute_hpr_statistics(hpr_data)
+    statistics = _ensure_columns(statistics, STANDARDIZED_STATISTICS_COLUMNS)
 
-    machine = (
-        _ensure_columns(hpr_data["machine"].copy(), STANDARDIZED_MACHINE_COLUMNS)
-        if not hpr_data["machine"].empty
-        else empty_standardized_table(STANDARDIZED_MACHINE_COLUMNS)
-    )
+    apt_df = _standardized_pricing_matrix(apt_parse_result)
 
     return {
-        "header": header,
-        "machine": machine,
+        "header": _format_table(hpr_data, "header", STANDARDIZED_HEADER_COLUMNS),
+        "machine": _format_table(hpr_data, "machine", STANDARDIZED_MACHINE_COLUMNS),
         "objects": objects_out,
-        "species_groups": species,
-        "products": products,
+        "species_groups": _format_table(hpr_data, "species_groups", STANDARDIZED_SPECIES_GROUPS_COLUMNS),
+        "products": _format_table(hpr_data, "products", STANDARDIZED_PRODUCTS_COLUMNS),
         "statistics": statistics,
         "stems": stems_out,
-        "logs": logs_out,
+        "logs": hpr_data.get("logs", pd.DataFrame()).copy() if not hpr_data.get("logs", pd.DataFrame()).empty else pd.DataFrame(),
+        "pricing_matrix": apt_df,
         META_SOURCE_TYPE: "stanford_2010_hpr",
         META_HAS_PRI: False,
     }
+
+
+def transform_pin_to_standardized(
+    pin_data: Dict[str, pd.DataFrame],
+) -> Dict[str, Any]:
+    out = empty_standardized_report("stanford_2010_pin", False)
+
+    products_in = pin_data.get("products", pd.DataFrame())
+    if not products_in.empty:
+        products = products_in.copy()
+        if "product_key" not in products.columns:
+            products["product_key"] = products.get("product_user_id", "")
+        if "product_name" not in products.columns:
+            products["product_name"] = ""
+        out["products"] = _ensure_columns(products, STANDARDIZED_PRODUCTS_COLUMNS)
+
+    matrix_in = pin_data.get("price_matrices", pd.DataFrame())
+    if not matrix_in.empty:
+        pm = matrix_in.copy()
+
+        # Join species data using pd.merge instead of mapping dicts
+        if not products_in.empty:
+            if "product_user_id" in pm.columns and "species_group_user_id" in products_in.columns:
+                mapping = products_in[["product_user_id", "species_group_user_id"]].dropna().drop_duplicates("product_user_id")
+                pm = pm.merge(mapping, on="product_user_id", how="left")
+                pm["Species_Name"] = pm["species_group_user_id"].fillna("")
+            elif "product_name" in pm.columns and "species_group_user_id" in products_in.columns:
+                mapping = products_in[["product_name", "species_group_user_id"]].dropna().drop_duplicates("product_name")
+                pm = pm.merge(mapping, on="product_name", how="left")
+                pm["Species_Name"] = pm["species_group_user_id"].fillna("")
+            else:
+                pm["Species_Name"] = ""
+        else:
+            pm["Species_Name"] = ""
+
+        pm["Assortment_Name"] = pm.get("product_name", "")
+        pm["Allowed_Grades_Bitmask"] = 0
+        pm["Diameter_Lower_mm"] = pd.to_numeric(pm.get("diameter_class_lower_limit", ""), errors="coerce").fillna(0).astype(int)
+        d_lim = pd.to_numeric(pm.get("diameter_class_limit", ""), errors="coerce")
+        pm["Diameter_Limit_mm"] = d_lim.fillna(pm["Diameter_Lower_mm"]).astype(int)
+        pm["Length_Lower_cm"] = pd.to_numeric(pm.get("length_class_lower_limit", ""), errors="coerce").fillna(0).astype(int)
+        l_lim = pd.to_numeric(pm.get("length_class_limit", ""), errors="coerce")
+        pm["Length_Limit_cm"] = l_lim.fillna(pm["Length_Lower_cm"]).astype(int)
+        pm["Relative_Value"] = pd.to_numeric(pm.get("price", ""), errors="coerce").fillna(0)
+
+        out["pricing_matrix"] = _ensure_columns(pm, STANDARDIZED_PRICING_COLUMNS)
+
+    return out
+
+
+def merge_pin_into_standardized(
+    standardized: Dict[str, Any], pin_data: Dict[str, pd.DataFrame],
+) -> Dict[str, Any]:
+    result = {k: v for k, v in standardized.items()}
+    pin_std = transform_pin_to_standardized(pin_data)
+    if not pin_std["pricing_matrix"].empty:
+        result["pricing_matrix"] = pin_std["pricing_matrix"]
+    if not pin_std["products"].empty:
+        existing = result.get("products", pd.DataFrame())
+        if existing.empty:
+            result["products"] = pin_std["products"]
+    return result
 
 
 def merge_pri_into_standardized(
@@ -187,43 +237,27 @@ def merge_pri_into_standardized(
     result = {k: v for k, v in standardized.items() if k in (META_SOURCE_TYPE, META_HAS_PRI)}
     result[META_HAS_PRI] = True
 
-    for key in ("header", "machine", "objects", "species_groups", "products", "statistics", "stems", "logs"):
-        result[key] = standardized[key].copy() if standardized[key] is not None else standardized[key]
-
-    if not pri_data["header"].empty and not result["header"].empty:
-        prd_row = result["header"].iloc[0]
-        pri_row = pri_data["header"].iloc[0]
-        for col in result["header"].columns:
-            if col in pri_row.index and (pd.isna(prd_row.get(col)) or prd_row.get(col) == ""):
-                result["header"].iloc[0][col] = pri_row[col]
-    if not pri_data["machine"].empty and not result["machine"].empty:
-        prd_row = result["machine"].iloc[0]
-        pri_row = pri_data["machine"].iloc[0]
-        for col in result["machine"].columns:
-            if col in pri_row.index and (pd.isna(prd_row.get(col)) or prd_row.get(col) == ""):
-                result["machine"].iloc[0][col] = pri_row[col]
-    if not pri_data["objects"].empty and not result["objects"].empty:
-        prd_row = result["objects"].iloc[0]
-        pri_row = pri_data["objects"].iloc[0]
-        for col in result["objects"].columns:
-            if col in pri_row.index and (pd.isna(prd_row.get(col)) or prd_row.get(col) == ""):
-                result["objects"].iloc[0][col] = pri_row[col]
-
     for key in (
-        "buyer_vendor",
-        "calibration",
-        "apt_history",
-        "price_matrices",
-        "operators",
-        "production_statistics",
-        "log_codes",
-        "tree_codes",
-        "additional_info",
+        "header", "machine", "objects", "species_groups", 
+        "products", "statistics", "stems", "logs", "pricing_matrix"
+    ):
+        if key in standardized:
+            result[key] = standardized[key].copy() if standardized[key] is not None else standardized[key]
+
+    # Use the safe combine_first helper for replacing missing values
+    result["header"] = _merge_first_row(result["header"], pri_data.get("header", pd.DataFrame()))
+    result["machine"] = _merge_first_row(result["machine"], pri_data.get("machine", pd.DataFrame()))
+    result["objects"] = _merge_first_row(result["objects"], pri_data.get("objects", pd.DataFrame()))
+
+    # Add PRI specific keys
+    for key in (
+        "buyer_vendor", "calibration", "apt_history", "price_matrices",
+        "operators", "production_statistics", "log_codes", "tree_codes", "additional_info"
     ):
         if key in pri_data:
             result[key] = pri_data[key]
 
-    if not pri_data["logs"].empty:
+    if not pri_data.get("logs", pd.DataFrame()).empty:
         pri_logs = pri_data["logs"].copy()
         if result["logs"].empty:
             result["logs"] = pri_logs
@@ -236,18 +270,18 @@ def merge_pri_into_standardized(
     return result
 
 
-def transform_prd_to_canonical(prd_data: Dict[str, pd.DataFrame]) -> Dict[str, Any]:
-    """Backward-compatible alias for transform_prd_to_standardized()."""
-    return transform_prd_to_standardized(prd_data)
-
-
-def transform_hpr_to_canonical(hpr_data: Dict[str, pd.DataFrame]) -> Dict[str, Any]:
-    """Backward-compatible alias for transform_hpr_to_standardized()."""
-    return transform_hpr_to_standardized(hpr_data)
-
-
-def merge_pri_into_canonical(
-    canonical: Dict[str, Any], pri_data: Dict[str, pd.DataFrame]
+def merge_apt_into_standardized(
+    standardized: Dict[str, Any],
+    apt_parse_result: Union[Dict[str, Any], pd.DataFrame],
 ) -> Dict[str, Any]:
-    """Backward-compatible alias for merge_pri_into_standardized()."""
-    return merge_pri_into_standardized(canonical, pri_data)
+    result = {k: v for k, v in standardized.items()}
+    result["pricing_matrix"] = _standardized_pricing_matrix(apt_parse_result)
+    return result
+
+
+def transform_apt_to_standardized(
+    apt_parse_result: Union[Dict[str, Any], pd.DataFrame],
+) -> Dict[str, Any]:
+    out = empty_standardized_report("classic_apt", False)
+    out["pricing_matrix"] = _standardized_pricing_matrix(apt_parse_result)
+    return out
