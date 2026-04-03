@@ -1,6 +1,8 @@
 import xml.etree.ElementTree as ET
 import pandas as pd
 from s4d_tools.utils.date_utils import format_date
+from s4d_tools.parsers.stanford_2010.constants import STANFORD_2010_NS
+from s4d_tools.parsers.stanford_2010.utils import get_text
 
 
 class HPRParser:
@@ -8,22 +10,12 @@ class HPRParser:
         self.file_path = file_path
         self.tree = ET.parse(file_path)
         self.root = self.tree.getroot()
-        self.ns = {'s': 'urn:skogforsk:stanford2010'}
+        self.ns = STANFORD_2010_NS
         self.units = {
             'length': self.root.attrib.get('lengthUnit', 'cm'), 
             'diameter': self.root.attrib.get('diameterUnit', 'mm'),
             'volume': self.root.attrib.get('volumeUnit', 'm3')
         }
-
-    def _get_text(self, node, tag):
-        """
-        Helper method to safely extract text from an XML node.
-        Returns empty string if node is None or tag is not found.
-        """
-        if node is None:
-            return ''
-        found = node.find(tag, self.ns)
-        return found.text if found is not None else ''
 
     def _parse_header(self):
         """
@@ -33,11 +25,11 @@ class HPRParser:
         header_data = []
         header_node = self.root.find('s:HarvestedProductionHeader', self.ns)
         
-        creation_date_raw = self._get_text(header_node, 's:CreationDate')
-        modification_date_raw = self._get_text(header_node, 's:ModificationDate')
-        application_version_created = self._get_text(header_node, 's:ApplicationVersionCreated')
-        application_version_modified = self._get_text(header_node, 's:ApplicationVersionModified')
-        country_code = self._get_text(header_node, 's:CountryCode')
+        creation_date_raw = get_text(header_node, 's:CreationDate')
+        modification_date_raw = get_text(header_node, 's:ModificationDate')
+        application_version_created = get_text(header_node, 's:ApplicationVersionCreated')
+        application_version_modified = get_text(header_node, 's:ApplicationVersionModified')
+        country_code = get_text(header_node, 's:CountryCode')
 
         # Format dates from ISO to DD-MM-YYYY HH:MM
         creation_date = format_date(creation_date_raw)
@@ -62,23 +54,23 @@ class HPRParser:
         machine_node = self.root.find('s:Machine', self.ns)
         
         machine_category = machine_node.attrib.get('machineCategory', '') if machine_node is not None else ''
-        machine_key = self._get_text(machine_node, 's:MachineKey')
-        machine_user_id = self._get_text(machine_node, 's:MachineUserID')
-        machine_owner_id = self._get_text(machine_node, 's:MachineOwnerID')
-        machine_application_version = self._get_text(machine_node, 's:MachineApplicationVersion')
-        machine_base_manufacturer = self._get_text(machine_node, 's:MachineBaseManufacturer')
-        machine_base_model = self._get_text(machine_node, 's:MachineBaseModel')
-        base_machine_manufacturer_id = self._get_text(machine_node, 's:BaseMachineManufacturerID')
-        machine_head_manufacturer = self._get_text(machine_node, 's:MachineHeadManufacturer')
-        machine_head_model = self._get_text(machine_node, 's:MachineHeadModel')
+        machine_key = get_text(machine_node, 's:MachineKey')
+        machine_user_id = get_text(machine_node, 's:MachineUserID')
+        machine_owner_id = get_text(machine_node, 's:MachineOwnerID')
+        machine_application_version = get_text(machine_node, 's:MachineApplicationVersion')
+        machine_base_manufacturer = get_text(machine_node, 's:MachineBaseManufacturer')
+        machine_base_model = get_text(machine_node, 's:MachineBaseModel')
+        base_machine_manufacturer_id = get_text(machine_node, 's:BaseMachineManufacturerID')
+        machine_head_manufacturer = get_text(machine_node, 's:MachineHeadManufacturer')
+        machine_head_model = get_text(machine_node, 's:MachineHeadModel')
         
         # Operator information
         operator_def = machine_node.find('s:OperatorDefinition', self.ns) if machine_node is not None else None
-        operator_key = self._get_text(operator_def, 's:OperatorKey')
-        operator_user_id = self._get_text(operator_def, 's:OperatorUserID')
+        operator_key = get_text(operator_def, 's:OperatorKey')
+        operator_user_id = get_text(operator_def, 's:OperatorUserID')
         contact_info = operator_def.find('s:ContactInformation', self.ns) if operator_def is not None else None
-        operator_first_name = self._get_text(contact_info, 's:FirstName')
-        operator_last_name = self._get_text(contact_info, 's:LastName')
+        operator_first_name = get_text(contact_info, 's:FirstName')
+        operator_last_name = get_text(contact_info, 's:LastName')
 
         machine_data.append({
             'machine_category': machine_category,
@@ -108,31 +100,31 @@ class HPRParser:
         species_groups = self.root.findall('.//s:SpeciesGroupDefinition', self.ns)
         
         for species_group in species_groups:
-            species_group_key = self._get_text(species_group, 's:SpeciesGroupKey')
-            modification_date_raw = self._get_text(species_group, 's:SpeciesGroupModificationDate')
+            species_group_key = get_text(species_group, 's:SpeciesGroupKey')
+            modification_date_raw = get_text(species_group, 's:SpeciesGroupModificationDate')
             modification_date = format_date(modification_date_raw)
             species_group_user_id = species_group.find('s:SpeciesGroupUserID', self.ns)
             species_group_user_id_value = species_group_user_id.text if species_group_user_id is not None else ''
             species_group_user_id_agency = species_group_user_id.attrib.get('agency', '') if species_group_user_id is not None else ''
-            species_group_name = self._get_text(species_group, 's:SpeciesGroupName')
+            species_group_name = get_text(species_group, 's:SpeciesGroupName')
             species_group_info = species_group.find('s:SpeciesGroupInfo', self.ns)
             species_group_info_value = species_group_info.text if species_group_info is not None and species_group_info.text else ''
             species_group_version = species_group.find('s:SpeciesGroupVersion', self.ns)
             species_group_version_value = species_group_version.text if species_group_version is not None else ''
-            species_group_presentation_order = self._get_text(species_group, 's:SpeciesGroupPresentationOrder')
-            dbh_height = self._get_text(species_group, 's:DBHHeight')
+            species_group_presentation_order = get_text(species_group, 's:SpeciesGroupPresentationOrder')
+            dbh_height = get_text(species_group, 's:DBHHeight')
             
             # Parse Grades
             grades = species_group.find('s:Grades', self.ns)
-            start_grade = self._get_text(grades, 's:StartGrade')
-            mth_start_grade = self._get_text(grades, 's:MTHStartGrade')
+            start_grade = get_text(grades, 's:StartGrade')
+            mth_start_grade = get_text(grades, 's:MTHStartGrade')
             
             # Parse BarkFunction
             bark_function = species_group.find('s:BarkFunction', self.ns)
             bark_function_category = bark_function.attrib.get('barkFunctionCategory', '') if bark_function is not None else ''
             swedish_zacco = bark_function.find('s:SwedishZacco', self.ns) if bark_function is not None else None
-            constant_a = self._get_text(swedish_zacco, 's:ConstantA')
-            factor_b = self._get_text(swedish_zacco, 's:FactorB')
+            constant_a = get_text(swedish_zacco, 's:ConstantA')
+            factor_b = get_text(swedish_zacco, 's:FactorB')
             
             species_groups_data.append({
                 'species_group_key': species_group_key,
@@ -162,15 +154,15 @@ class HPRParser:
         products = self.root.findall('.//s:ProductDefinition', self.ns)
         
         for product in products:
-            product_key = self._get_text(product, 's:ProductKey')
+            product_key = get_text(product, 's:ProductKey')
             classified_product = product.find('s:ClassifiedProductDefinition', self.ns)
-            product_name = self._get_text(classified_product, 's:ProductName')
-            product_modification_date_raw = self._get_text(classified_product, 's:ModificationDate')
+            product_name = get_text(classified_product, 's:ProductName')
+            product_modification_date_raw = get_text(classified_product, 's:ModificationDate')
             product_modification_date = format_date(product_modification_date_raw)
             product_user_id = classified_product.find('s:ProductUserID', self.ns) if classified_product is not None else None
             product_user_id_value = product_user_id.text if product_user_id is not None else ''
             product_user_id_agency = product_user_id.attrib.get('agency', '') if product_user_id is not None else ''
-            product_species_group_key = self._get_text(classified_product, 's:SpeciesGroupKey')
+            product_species_group_key = get_text(classified_product, 's:SpeciesGroupKey')
             
             products_data.append({
                 'product_key': product_key,
@@ -192,29 +184,29 @@ class HPRParser:
         objects = self.root.findall('.//s:ObjectDefinition', self.ns)
         
         for obj in objects:
-            object_key = self._get_text(obj, 's:ObjectKey')
+            object_key = get_text(obj, 's:ObjectKey')
             object_user_id = obj.find('s:ObjectUserID', self.ns)
             object_user_id_value = object_user_id.text if object_user_id is not None else ''
             object_user_id_agency = object_user_id.attrib.get('agency', '') if object_user_id is not None else ''
-            object_name = self._get_text(obj, 's:ObjectName')
-            object_modification_date_raw = self._get_text(obj, 's:ObjectModificationDate')
+            object_name = get_text(obj, 's:ObjectName')
+            object_modification_date_raw = get_text(obj, 's:ObjectModificationDate')
             object_modification_date = format_date(object_modification_date_raw)
-            forest_certification = self._get_text(obj, 's:ForestCertification')
+            forest_certification = get_text(obj, 's:ForestCertification')
             contract_number = obj.find('s:ContractNumber', self.ns)
             contract_number_value = contract_number.text if contract_number is not None else ''
             contract_number_category = contract_number.attrib.get('ContractCategory', '') if contract_number is not None else ''
-            real_estate_id_object = self._get_text(obj, 's:RealEstateIDObject')
-            start_date_raw = self._get_text(obj, 's:StartDate')
+            real_estate_id_object = get_text(obj, 's:RealEstateIDObject')
+            start_date_raw = get_text(obj, 's:StartDate')
             start_date = format_date(start_date_raw)
             
             # Parse SubObject
             sub_object = obj.find('s:SubObject', self.ns)
-            sub_object_key = self._get_text(sub_object, 's:SubObjectKey')
+            sub_object_key = get_text(sub_object, 's:SubObjectKey')
             sub_object_user_id = sub_object.find('s:SubObjectUserID', self.ns) if sub_object is not None else None
             sub_object_user_id_value = sub_object_user_id.text if sub_object_user_id is not None else ''
             sub_object_user_id_agency = sub_object_user_id.attrib.get('agency', '') if sub_object_user_id is not None else ''
-            sub_object_name = self._get_text(sub_object, 's:SubObjectName')
-            real_estate_id_sub_object = self._get_text(sub_object, 's:RealEstateIDSubObject')
+            sub_object_name = get_text(sub_object, 's:SubObjectName')
+            real_estate_id_sub_object = get_text(sub_object, 's:RealEstateIDSubObject')
             
             objects_data.append({
                 'object_key': object_key,
@@ -246,16 +238,16 @@ class HPRParser:
         
         for stem in stems:
             # Parse basic stem information
-            stem_key = self._get_text(stem, 's:StemKey')
-            object_key = self._get_text(stem, 's:ObjectKey')
-            sub_object_key = self._get_text(stem, 's:SubObjectKey')
-            species_group_key = self._get_text(stem, 's:SpeciesGroupKey')
-            operator_key_stem = self._get_text(stem, 's:OperatorKey')
-            harvest_date_raw = self._get_text(stem, 's:HarvestDate')
+            stem_key = get_text(stem, 's:StemKey')
+            object_key = get_text(stem, 's:ObjectKey')
+            sub_object_key = get_text(stem, 's:SubObjectKey')
+            species_group_key = get_text(stem, 's:SpeciesGroupKey')
+            operator_key_stem = get_text(stem, 's:OperatorKey')
+            harvest_date_raw = get_text(stem, 's:HarvestDate')
             harvest_date = format_date(harvest_date_raw)
-            stem_number = self._get_text(stem, 's:StemNumber')
-            processing_category = self._get_text(stem, 's:ProcessingCategory')
-            stump_treatment = self._get_text(stem, 's:StumpTreatment')
+            stem_number = get_text(stem, 's:StemNumber')
+            processing_category = get_text(stem, 's:ProcessingCategory')
+            stump_treatment = get_text(stem, 's:StumpTreatment')
             
             # Parse coordinates (base machine position)
             all_coords = stem.findall('s:StemCoordinates', self.ns)
@@ -264,25 +256,25 @@ class HPRParser:
                 if coord.attrib.get('receiverPosition') == 'Base machine position':
                     base_coords = coord
                     break
-            base_lat = self._get_text(base_coords, 's:Latitude')
-            base_lon = self._get_text(base_coords, 's:Longitude')
-            base_alt = self._get_text(base_coords, 's:Altitude')
+            base_lat = get_text(base_coords, 's:Latitude')
+            base_lon = get_text(base_coords, 's:Longitude')
+            base_alt = get_text(base_coords, 's:Altitude')
             
             # Parse extension information
             extension = stem.find('s:Extension', self.ns)
-            session_id = self._get_text(extension, 's:SessionId')
-            analyzed_length = self._get_text(extension, 's:AnalyzedLength')
+            session_id = get_text(extension, 's:SessionId')
+            analyzed_length = get_text(extension, 's:AnalyzedLength')
             
             # Parse SingleTreeProcessedStem data
             single_tree = stem.find('s:SingleTreeProcessedStem', self.ns)
-            dbh = self._get_text(single_tree, 's:DBH')
+            dbh = get_text(single_tree, 's:DBH')
             ref_diameter = single_tree.find('s:ReferenceDiameter', self.ns) if single_tree is not None else None
             ref_diameter_value = ref_diameter.text if ref_diameter is not None else ''
             ref_diameter_height = ref_diameter.attrib.get('referenceDiameterHeight', '') if ref_diameter is not None else ''
             
             # Parse stem grade
             stem_grade = single_tree.find('s:StemGrade', self.ns) if single_tree is not None else None
-            grade_value = self._get_text(stem_grade, 's:GradeValue')
+            grade_value = get_text(stem_grade, 's:GradeValue')
             
             # Append stem data
             stems_data.append({
@@ -317,15 +309,15 @@ class HPRParser:
         stems = self.root.findall('.//s:Stem', self.ns)
         
         for stem in stems:
-            stem_key = self._get_text(stem, 's:StemKey')
+            stem_key = get_text(stem, 's:StemKey')
             single_tree = stem.find('s:SingleTreeProcessedStem', self.ns)
             
             # Parse logs within this stem
             if single_tree is not None:
                 logs = single_tree.findall('s:Log', self.ns)
                 for log in logs:
-                    log_key = self._get_text(log, 's:LogKey')
-                    product_key = self._get_text(log, 's:ProductKey')
+                    log_key = get_text(log, 's:LogKey')
+                    product_key = get_text(log, 's:ProductKey')
                     
                     # Parse log volumes (multiple categories)
                     log_volumes = log.findall('s:LogVolume', self.ns)
@@ -344,15 +336,15 @@ class HPRParser:
                     
                     # Parse cutting category
                     cutting_cat = log.find('s:CuttingCategory', self.ns)
-                    cutting_reason = self._get_text(cutting_cat, 's:CuttingReason')
+                    cutting_reason = get_text(cutting_cat, 's:CuttingReason')
                     
                     # Parse extension (start position)
                     log_extension = log.find('s:Extension', self.ns)
-                    start_pos = self._get_text(log_extension, 's:StartPos')
+                    start_pos = get_text(log_extension, 's:StartPos')
                     
                     # Parse log measurements
                     log_measurement = log.find('s:LogMeasurement', self.ns)
-                    log_length = self._get_text(log_measurement, 's:LogLength')
+                    log_length = get_text(log_measurement, 's:LogLength')
                     
                     # Parse log diameters (multiple categories)
                     log_diameters = log_measurement.findall('s:LogDiameter', self.ns) if log_measurement is not None else []
