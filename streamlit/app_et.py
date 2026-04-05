@@ -18,6 +18,7 @@ from s4d_tools.transformers import (
     transform_prd_to_standardized,
 )
 from s4d_tools.transformers.standradized_schema import META_HAS_PRI, META_SOURCE_TYPE
+from s4d_tools.utils.sanitize_s4d2010 import sanitize_s4d2010_xml
 
 # Page configuration
 st.set_page_config(
@@ -26,19 +27,9 @@ st.set_page_config(
     layout="wide"
 )
 
-# Title and description
 st.title("🌲 Harvesteri Failide Analüüs")
-st.write("Lae üles oma .prd või .hpr failid, et näha statistikat ja analüüsi.")
-st.write(
-    "**Märkus:** PRI (Production-individual) saab lisada PRD-ga täiendava tootmise info jaoks. "
-    "Valikuline **APT** (mootmisjuhised) lisab suhtelised hinna/maatriksid."
-)
-
-# File upload
-uploaded_file = st.file_uploader("Lohista PRD või HPR fail siia", type=['prd', 'hpr'])
-uploaded_pri_file = st.file_uploader("Lohista PRI fail siia (valikuline, peab tulema koos PRD failiga)", type=['pri'])
-uploaded_apt_file = st.file_uploader(
-    "Lohista APT fail siia (valikuline, mootmis / hinna maatriks)", type=['apt']
+tab_visualize, tab_redact = st.tabs(
+    ["📊 Andmete visualiseerimine", "🔒 Tundlike andmete asendamine (GDPR)"]
 )
 
 def _standardized_source_label_et(source_type: str) -> str:
@@ -522,111 +513,169 @@ def visualize_data(
                 else:
                     st.info("Lisainfo andmed puuduvad.")
 
-# Validate PRI file upload (cannot be provided alone)
-if uploaded_pri_file is not None and uploaded_file is None:
-    st.error("❌ PRI faili ei saa laadida ilma PRD failita. Palun lae esmalt PRD fail.")
-    st.stop()
-
-if uploaded_apt_file is not None and uploaded_file is None:
-    st.error(
-        "❌ APT faili ei saa laadida ilma PRD või HPR failita. Palun lae esmalt põhiaruande fail."
+with tab_visualize:
+    st.write("Lae üles oma .prd või .hpr failid, et näha statistikat ja analüüsi.")
+    st.write(
+        "**Märkus:** PRI (Production-individual) saab lisada PRD-ga täiendava tootmise info jaoks. "
+        "Valikuline **APT** (mootmisjuhised) lisab suhtelised hinna/maatriksid."
     )
-    st.stop()
 
-if uploaded_file is not None:
-    st.success("Fail edukalt laetud!")
-    st.write(f"**Faili nimi:** {uploaded_file.name}")
-    
-    if uploaded_pri_file is not None:
-        st.success("PRI fail edukalt laetud!")
-        st.write(f"**PRI faili nimi:** {uploaded_pri_file.name}")
+    uploaded_file = st.file_uploader("Lohista PRD või HPR fail siia", type=['prd', 'hpr'])
+    uploaded_pri_file = st.file_uploader(
+        "Lohista PRI fail siia (valikuline, peab tulema koos PRD failiga)", type=['pri']
+    )
+    uploaded_apt_file = st.file_uploader(
+        "Lohista APT fail siia (valikuline, mootmis / hinna maatriks)", type=['apt']
+    )
 
-    if uploaded_apt_file is not None:
-        st.success("APT fail edukalt laetud!")
-        st.write(f"**APT faili nimi:** {uploaded_apt_file.name}")
+    # Validate PRI file upload (cannot be provided alone)
+    if uploaded_pri_file is not None and uploaded_file is None:
+        st.error("❌ PRI faili ei saa laadida ilma PRD failita. Palun lae esmalt PRD fail.")
+        st.stop()
 
-    # Determine file type
-    file_extension = uploaded_file.name.split('.')[-1].lower()
-    file_type = 'hpr' if file_extension == 'hpr' else 'prd'
-    temp_file = f"temp_{file_type}_file.{file_extension}"
-    
-    # Save uploaded file temporarily
-    with open(temp_file, "wb") as f:
-        f.write(uploaded_file.getbuffer())
-    
-    temp_pri_file = None
-    if uploaded_pri_file is not None:
-        temp_pri_file = f"temp_pri_file.pri"
-        with open(temp_pri_file, "wb") as f:
-            f.write(uploaded_pri_file.getbuffer())
+    if uploaded_apt_file is not None and uploaded_file is None:
+        st.error(
+            "❌ APT faili ei saa laadida ilma PRD või HPR failita. Palun lae esmalt põhiaruande fail."
+        )
+        st.stop()
 
-    temp_apt_file = None
-    if uploaded_apt_file is not None:
-        temp_apt_file = "temp_apt_file.apt"
-        with open(temp_apt_file, "wb") as f:
-            f.write(uploaded_apt_file.getbuffer())
+    if uploaded_file is not None:
+        st.success("Fail edukalt laetud!")
+        st.write(f"**Faili nimi:** {uploaded_file.name}")
 
-    try:
-        has_apt = temp_apt_file is not None and os.path.exists(temp_apt_file)
-        apt_parse_result = None
+        if uploaded_pri_file is not None:
+            st.success("PRI fail edukalt laetud!")
+            st.write(f"**PRI faili nimi:** {uploaded_pri_file.name}")
 
-        with st.spinner(f"Parsin {file_extension.upper()} faili..."):
+        if uploaded_apt_file is not None:
+            st.success("APT fail edukalt laetud!")
+            st.write(f"**APT faili nimi:** {uploaded_apt_file.name}")
+
+        # Determine file type
+        file_extension = uploaded_file.name.split('.')[-1].lower()
+        file_type = 'hpr' if file_extension == 'hpr' else 'prd'
+        temp_file = f"temp_{file_type}_file.{file_extension}"
+
+        # Save uploaded file temporarily
+        with open(temp_file, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+
+        temp_pri_file = None
+        if uploaded_pri_file is not None:
+            temp_pri_file = f"temp_pri_file.pri"
+            with open(temp_pri_file, "wb") as f:
+                f.write(uploaded_pri_file.getbuffer())
+
+        temp_apt_file = None
+        if uploaded_apt_file is not None:
+            temp_apt_file = "temp_apt_file.apt"
+            with open(temp_apt_file, "wb") as f:
+                f.write(uploaded_apt_file.getbuffer())
+
+        try:
+            has_apt = temp_apt_file is not None and os.path.exists(temp_apt_file)
+            apt_parse_result = None
+
+            with st.spinner(f"Parsin {file_extension.upper()} faili..."):
+                if file_type == 'hpr':
+                    parser = HPRParser(temp_file)
+                    parsed_data = parser.parse_all()
+                else:
+                    parser = PRDParser(temp_file)
+                    parsed_data = parser.parse()
+
+            if has_apt:
+                with st.spinner("Parsin APT faili (hinna maatriks)..."):
+                    apt_parse_result = APTParser(temp_apt_file).parse()
+
             if file_type == 'hpr':
-                parser = HPRParser(temp_file)
-                parsed_data = parser.parse_all()
+                data = transform_hpr_to_standardized(
+                    parsed_data,
+                    apt_parse_result=apt_parse_result,
+                )
             else:
-                parser = PRDParser(temp_file)
-                parsed_data = parser.parse()
+                data = transform_prd_to_standardized(
+                    parsed_data,
+                    apt_parse_result=apt_parse_result,
+                )
 
-        if has_apt:
-            with st.spinner("Parsin APT faili (hinna maatriks)..."):
-                apt_parse_result = APTParser(temp_apt_file).parse()
+            # Parse PRI file if provided
+            pri_data = None
+            has_pri = False
+            if temp_pri_file is not None and os.path.exists(temp_pri_file):
+                with st.spinner("Parsin PRI faili..."):
+                    pri_parser = PRIParser(temp_pri_file)
+                    pri_data = pri_parser.parse()
+                    has_pri = True
 
-        if file_type == 'hpr':
-            data = transform_hpr_to_standardized(
-                parsed_data,
-                apt_parse_result=apt_parse_result,
+                    data = merge_pri_into_standardized(data, pri_data)
+
+            st.success("Fail edukalt parsimist!")
+
+            # Visualize only the standardized transformation output
+            visualize_data(data, has_pri=has_pri, has_apt=has_apt)
+
+            # Clean up temporary files
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+            if temp_pri_file and os.path.exists(temp_pri_file):
+                os.remove(temp_pri_file)
+            if temp_apt_file and os.path.exists(temp_apt_file):
+                os.remove(temp_apt_file)
+
+        except Exception as e:
+            st.error(f"Viga faili parsimisel: {str(e)}")
+            st.exception(e)
+            # Clean up temporary files on error
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+            if temp_pri_file and os.path.exists(temp_pri_file):
+                os.remove(temp_pri_file)
+            if temp_apt_file and os.path.exists(temp_apt_file):
+                os.remove(temp_apt_file)
+
+    else:
+        st.info("👆 Palun lae üles PRD või HPR fail, et alustada analüüsi.")
+
+with tab_redact:
+    st.write(
+        "Lae üles **Stanford 2010 XML** (nt `.hpr`, `.pin`), et saada koopia, kus tundlikud väljad on "
+        "asendatud kohatäitega ning valikuliselt asendatud tüve ajatemplid."
+    )
+    st.caption(
+        "Klassikalised `.prd` / `.pri` aruanded ei ole see XML; kasuta Stanford 2010 HPR või PIN eksporti."
+    )
+    redact_upload = st.file_uploader(
+        "Stanford 2010 XML (HPR, PIN, …)",
+        type=["hpr", "pin", "xml", "mom", "hqc", "thp"],
+        key="et_redact_xml_upload",
+    )
+    redact_placeholder = st.text_input("Kohatäite tekst", value="xxx", key="et_redact_placeholder")
+    redact_strip_times = st.checkbox(
+        "Asenda tüve HarvestDate ja Stem/Extension all olevad kellaajad",
+        value=True,
+        key="et_redact_strip_times",
+    )
+    if redact_upload is not None:
+        raw_xml = redact_upload.getvalue()
+        try:
+            sanitized = sanitize_s4d2010_xml(
+                raw_xml,
+                placeholder=(redact_placeholder.strip() or "xxx"),
+                strip_stem_times=redact_strip_times,
             )
-        else:
-            data = transform_prd_to_standardized(
-                parsed_data,
-                apt_parse_result=apt_parse_result,
+            base_name = redact_upload.name.rsplit(".", 1)
+            dl_name = (
+                f"redacted_{base_name[0]}.{base_name[1]}"
+                if len(base_name) == 2
+                else f"redacted_{redact_upload.name}"
             )
-
-        # Parse PRI file if provided
-        pri_data = None
-        has_pri = False
-        if temp_pri_file is not None and os.path.exists(temp_pri_file):
-            with st.spinner("Parsin PRI faili..."):
-                pri_parser = PRIParser(temp_pri_file)
-                pri_data = pri_parser.parse()
-                has_pri = True
-
-                data = merge_pri_into_standardized(data, pri_data)
-
-        st.success("Fail edukalt parsimist!")
-
-        # Visualize only the standardized transformation output
-        visualize_data(data, has_pri=has_pri, has_apt=has_apt)
-
-        # Clean up temporary files
-        if os.path.exists(temp_file):
-            os.remove(temp_file)
-        if temp_pri_file and os.path.exists(temp_pri_file):
-            os.remove(temp_pri_file)
-        if temp_apt_file and os.path.exists(temp_apt_file):
-            os.remove(temp_apt_file)
-
-    except Exception as e:
-        st.error(f"Viga faili parsimisel: {str(e)}")
-        st.exception(e)
-        # Clean up temporary files on error
-        if os.path.exists(temp_file):
-            os.remove(temp_file)
-        if temp_pri_file and os.path.exists(temp_pri_file):
-            os.remove(temp_pri_file)
-        if temp_apt_file and os.path.exists(temp_apt_file):
-            os.remove(temp_apt_file)
-
-else:
-    st.info("👆 Palun lae üles PRD või HPR fail, et alustada analüüsi.")
+            st.download_button(
+                label="Laadi alla redigeeritud XML",
+                data=sanitized,
+                file_name=dl_name,
+                mime="application/xml",
+                key="et_redact_download",
+            )
+        except ValueError as err:
+            st.error(str(err))

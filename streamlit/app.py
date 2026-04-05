@@ -19,6 +19,7 @@ from s4d_tools.transformers import (
     transform_prd_to_standardized,
 )
 from s4d_tools.transformers.standradized_schema import META_HAS_PRI, META_SOURCE_TYPE
+from s4d_tools.utils.sanitize_s4d2010 import sanitize_s4d2010_xml
 
 
 def _split_apt_pin_uploads(
@@ -56,27 +57,9 @@ st.set_page_config(
     layout="wide"
 )
 
-# Title and description
+# Title and top-level mode (visualize vs redact)
 st.title("🌲 Harvester File Analysis")
-st.write("Upload your .prd or .hpr files to view statistics and analysis.")
-st.write(
-    "**Note:** PRI (Production-individual) can be added with PRD for more production detail. "
-    "Optional **APT** (classic bucking instructions) adds relative price matrices for PRD. "
-    "For **Stanford 2010 HPR**, optional **PIN** (Product Instruction XML) supplies the product price matrix. "
-    "You can upload **APT and/or PIN** in the same optional uploader below."
-)
-
-# File upload
-uploaded_file = st.file_uploader("Drag PRD or HPR file here", type=['prd', 'hpr'])
-uploaded_pri_file = st.file_uploader("Drag PRI file here (optional, must come with PRD file)", type=['pri'])
-uploaded_apt_pin = st.file_uploader(
-    "Drag APT and/or PIN here (optional — classic PRD bucking / HPR product price matrix)",
-    type=["apt", "pin"],
-    accept_multiple_files=True,
-)
-uploaded_apt_file, uploaded_pin_file, _apt_pin_upload_warnings = _split_apt_pin_uploads(
-    uploaded_apt_pin
-)
+tab_visualize, tab_redact = st.tabs(["📊 Data visualization", "🔒 Data redaction (GDPR)"])
 
 def _standardized_source_label(source_type: str) -> str:
     """Human-readable label for META_SOURCE_TYPE."""
@@ -570,142 +553,206 @@ def visualize_data(
                 else:
                     st.info("Additional info data is missing.")
 
-# Validate PRI file upload (cannot be provided alone)
-if uploaded_pri_file is not None and uploaded_file is None:
-    st.error("❌ PRI file cannot be uploaded without a PRD file. Please upload a PRD file first.")
-    st.stop()
+with tab_visualize:
+    st.write("Upload your .prd or .hpr files to view statistics and analysis.")
+    st.write(
+        "**Note:** PRI (Production-individual) can be added with PRD for more production detail. "
+        "Optional **APT** (classic bucking instructions) adds relative price matrices for PRD. "
+        "For **Stanford 2010 HPR**, optional **PIN** (Product Instruction XML) supplies the product price matrix. "
+        "You can upload **APT and/or PIN** in the same optional uploader below."
+    )
 
-if uploaded_file is None and uploaded_apt_pin is not None:
-    _n = len(uploaded_apt_pin) if isinstance(uploaded_apt_pin, list) else 1
-    if _n > 0:
-        st.error(
-            "❌ APT/PIN cannot be uploaded without a PRD or HPR file. "
-            "Please upload a main report file first."
-        )
+    # File upload
+    uploaded_file = st.file_uploader("Drag PRD or HPR file here", type=['prd', 'hpr'])
+    uploaded_pri_file = st.file_uploader("Drag PRI file here (optional, must come with PRD file)", type=['pri'])
+    uploaded_apt_pin = st.file_uploader(
+        "Drag APT and/or PIN here (optional — classic PRD bucking / HPR product price matrix)",
+        type=["apt", "pin"],
+        accept_multiple_files=True,
+    )
+    uploaded_apt_file, uploaded_pin_file, _apt_pin_upload_warnings = _split_apt_pin_uploads(
+        uploaded_apt_pin
+    )
+
+    # Validate PRI file upload (cannot be provided alone)
+    if uploaded_pri_file is not None and uploaded_file is None:
+        st.error("❌ PRI file cannot be uploaded without a PRD file. Please upload a PRD file first.")
         st.stop()
 
-if uploaded_file is not None:
-    st.success("File successfully uploaded!")
-    st.write(f"**File Name:** {uploaded_file.name}")
-    
-    if uploaded_pri_file is not None:
-        st.success("PRI file successfully uploaded!")
-        st.write(f"**PRI File Name:** {uploaded_pri_file.name}")
+    if uploaded_file is None and uploaded_apt_pin is not None:
+        _n = len(uploaded_apt_pin) if isinstance(uploaded_apt_pin, list) else 1
+        if _n > 0:
+            st.error(
+                "❌ APT/PIN cannot be uploaded without a PRD or HPR file. "
+                "Please upload a main report file first."
+            )
+            st.stop()
 
-    for w in _apt_pin_upload_warnings:
-        st.warning(w)
+    if uploaded_file is not None:
+        st.success("File successfully uploaded!")
+        st.write(f"**File Name:** {uploaded_file.name}")
 
-    if uploaded_apt_file is not None:
-        st.success("APT file successfully uploaded!")
-        st.write(f"**APT File Name:** {uploaded_apt_file.name}")
+        if uploaded_pri_file is not None:
+            st.success("PRI file successfully uploaded!")
+            st.write(f"**PRI File Name:** {uploaded_pri_file.name}")
 
-    if uploaded_pin_file is not None:
-        st.success("PIN file successfully uploaded!")
-        st.write(f"**PIN File Name:** {uploaded_pin_file.name}")
+        for w in _apt_pin_upload_warnings:
+            st.warning(w)
 
-    # Determine file type
-    file_extension = uploaded_file.name.split('.')[-1].lower()
-    file_type = 'hpr' if file_extension == 'hpr' else 'prd'
-    temp_file = f"temp_{file_type}_file.{file_extension}"
-    
-    # Save uploaded file temporarily
-    with open(temp_file, "wb") as f:
-        f.write(uploaded_file.getbuffer())
-    
-    temp_pri_file = None
-    if uploaded_pri_file is not None:
-        temp_pri_file = f"temp_pri_file.pri"
-        with open(temp_pri_file, "wb") as f:
-            f.write(uploaded_pri_file.getbuffer())
+        if uploaded_apt_file is not None:
+            st.success("APT file successfully uploaded!")
+            st.write(f"**APT File Name:** {uploaded_apt_file.name}")
 
-    temp_apt_file = None
-    if uploaded_apt_file is not None:
-        temp_apt_file = "temp_apt_file.apt"
-        with open(temp_apt_file, "wb") as f:
-            f.write(uploaded_apt_file.getbuffer())
+        if uploaded_pin_file is not None:
+            st.success("PIN file successfully uploaded!")
+            st.write(f"**PIN File Name:** {uploaded_pin_file.name}")
 
-    temp_pin_file = None
-    if uploaded_pin_file is not None:
-        temp_pin_file = "temp_pin_file.pin"
-        with open(temp_pin_file, "wb") as f:
-            f.write(uploaded_pin_file.getbuffer())
+        # Determine file type
+        file_extension = uploaded_file.name.split('.')[-1].lower()
+        file_type = 'hpr' if file_extension == 'hpr' else 'prd'
+        temp_file = f"temp_{file_type}_file.{file_extension}"
 
-    try:
-        has_apt = temp_apt_file is not None and os.path.exists(temp_apt_file)
-        apt_parse_result = None
+        # Save uploaded file temporarily
+        with open(temp_file, "wb") as f:
+            f.write(uploaded_file.getbuffer())
 
-        with st.spinner(f"Parsing {file_extension.upper()} file..."):
+        temp_pri_file = None
+        if uploaded_pri_file is not None:
+            temp_pri_file = f"temp_pri_file.pri"
+            with open(temp_pri_file, "wb") as f:
+                f.write(uploaded_pri_file.getbuffer())
+
+        temp_apt_file = None
+        if uploaded_apt_file is not None:
+            temp_apt_file = "temp_apt_file.apt"
+            with open(temp_apt_file, "wb") as f:
+                f.write(uploaded_apt_file.getbuffer())
+
+        temp_pin_file = None
+        if uploaded_pin_file is not None:
+            temp_pin_file = "temp_pin_file.pin"
+            with open(temp_pin_file, "wb") as f:
+                f.write(uploaded_pin_file.getbuffer())
+
+        try:
+            has_apt = temp_apt_file is not None and os.path.exists(temp_apt_file)
+            apt_parse_result = None
+
+            with st.spinner(f"Parsing {file_extension.upper()} file..."):
+                if file_type == 'hpr':
+                    parser = HPRParser(temp_file)
+                    parsed_data = parser.parse_all()
+                else:
+                    parser = PRDParser(temp_file)
+                    parsed_data = parser.parse()
+
+            if has_apt:
+                with st.spinner("Parsing APT file (price matrix)..."):
+                    apt_parse_result = APTParser(temp_apt_file).parse()
+
             if file_type == 'hpr':
-                parser = HPRParser(temp_file)
-                parsed_data = parser.parse_all()
-            else:
-                parser = PRDParser(temp_file)
-                parsed_data = parser.parse()
-
-        if has_apt:
-            with st.spinner("Parsing APT file (price matrix)..."):
-                apt_parse_result = APTParser(temp_apt_file).parse()
-
-        if file_type == 'hpr':
-            data = transform_hpr_to_standardized(
-                parsed_data,
-                apt_parse_result=apt_parse_result,
-            )
-        else:
-            data = transform_prd_to_standardized(
-                parsed_data,
-                apt_parse_result=apt_parse_result,
-            )
-
-        if temp_pin_file is not None and os.path.exists(temp_pin_file):
-            if file_type != 'hpr':
-                st.warning(
-                    "PIN (Product Instruction) applies to Stanford 2010 HPR only; "
-                    "ignoring the PIN file for this PRD report."
+                data = transform_hpr_to_standardized(
+                    parsed_data,
+                    apt_parse_result=apt_parse_result,
                 )
             else:
-                with st.spinner("Parsing PIN file (product / price matrix)..."):
-                    pin_data = PINParser(temp_pin_file).parse_all()
-                    data = merge_pin_into_standardized(data, pin_data)
+                data = transform_prd_to_standardized(
+                    parsed_data,
+                    apt_parse_result=apt_parse_result,
+                )
 
-        # Parse PRI file if provided
-        pri_data = None
-        has_pri = False
-        if temp_pri_file is not None and os.path.exists(temp_pri_file):
-            with st.spinner("Parsing PRI file..."):
-                pri_parser = PRIParser(temp_pri_file)
-                pri_data = pri_parser.parse()
-                has_pri = True
+            if temp_pin_file is not None and os.path.exists(temp_pin_file):
+                if file_type != 'hpr':
+                    st.warning(
+                        "PIN (Product Instruction) applies to Stanford 2010 HPR only; "
+                        "ignoring the PIN file for this PRD report."
+                    )
+                else:
+                    with st.spinner("Parsing PIN file (product / price matrix)..."):
+                        pin_data = PINParser(temp_pin_file).parse_all()
+                        data = merge_pin_into_standardized(data, pin_data)
 
-                data = merge_pri_into_standardized(data, pri_data)
+            # Parse PRI file if provided
+            pri_data = None
+            has_pri = False
+            if temp_pri_file is not None and os.path.exists(temp_pri_file):
+                with st.spinner("Parsing PRI file..."):
+                    pri_parser = PRIParser(temp_pri_file)
+                    pri_data = pri_parser.parse()
+                    has_pri = True
 
-        st.success("File successfully parsed!")
+                    data = merge_pri_into_standardized(data, pri_data)
 
-        # Visualize only the standardized transformation output
-        visualize_data(data, has_pri=has_pri)
+            st.success("File successfully parsed!")
 
-        # Clean up temporary files
-        if os.path.exists(temp_file):
-            os.remove(temp_file)
-        if temp_pri_file and os.path.exists(temp_pri_file):
-            os.remove(temp_pri_file)
-        if temp_apt_file and os.path.exists(temp_apt_file):
-            os.remove(temp_apt_file)
-        if temp_pin_file and os.path.exists(temp_pin_file):
-            os.remove(temp_pin_file)
+            # Visualize only the standardized transformation output
+            visualize_data(data, has_pri=has_pri)
 
-    except Exception as e:
-        st.error(f"Error parsing file: {str(e)}")
-        st.exception(e)
-        # Clean up temporary files on error
-        if os.path.exists(temp_file):
-            os.remove(temp_file)
-        if temp_pri_file and os.path.exists(temp_pri_file):
-            os.remove(temp_pri_file)
-        if temp_apt_file and os.path.exists(temp_apt_file):
-            os.remove(temp_apt_file)
-        if temp_pin_file and os.path.exists(temp_pin_file):
-            os.remove(temp_pin_file)
+            # Clean up temporary files
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+            if temp_pri_file and os.path.exists(temp_pri_file):
+                os.remove(temp_pri_file)
+            if temp_apt_file and os.path.exists(temp_apt_file):
+                os.remove(temp_apt_file)
+            if temp_pin_file and os.path.exists(temp_pin_file):
+                os.remove(temp_pin_file)
 
-else:
-    st.info("👆 Please upload a PRD or HPR file to start the analysis.")
+        except Exception as e:
+            st.error(f"Error parsing file: {str(e)}")
+            st.exception(e)
+            # Clean up temporary files on error
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+            if temp_pri_file and os.path.exists(temp_pri_file):
+                os.remove(temp_pri_file)
+            if temp_apt_file and os.path.exists(temp_apt_file):
+                os.remove(temp_apt_file)
+            if temp_pin_file and os.path.exists(temp_pin_file):
+                os.remove(temp_pin_file)
+
+    else:
+        st.info("👆 Please upload a PRD or HPR file to start the analysis.")
+
+with tab_redact:
+    st.write(
+        "Upload **Stanford 2010 XML** (e.g. `.hpr`, `.pin`) to produce a copy with sensitive fields "
+        "replaced by a placeholder, with optional redaction of stem harvest dates and extension timestamps."
+    )
+    st.caption(
+        "Classic `.prd` / `.pri` reports are not XML; use an HPR or PIN export in the Stanford 2010 schema."
+    )
+    redact_upload = st.file_uploader(
+        "Stanford 2010 XML (HPR, PIN, …)",
+        type=["hpr", "pin", "xml", "mom", "hqc", "thp"],
+        key="redact_xml_upload",
+    )
+    redact_placeholder = st.text_input("Placeholder text", value="xxx", key="redact_placeholder")
+    redact_strip_times = st.checkbox(
+        "Redact stem HarvestDate and all timings under Stem/Extension",
+        value=True,
+        key="redact_strip_times",
+    )
+    if redact_upload is not None:
+        raw_xml = redact_upload.getvalue()
+        try:
+            sanitized = sanitize_s4d2010_xml(
+                raw_xml,
+                placeholder=(redact_placeholder.strip() or "xxx"),
+                strip_stem_times=redact_strip_times,
+            )
+            base_name = redact_upload.name.rsplit(".", 1)
+            dl_name = (
+                f"redacted_{base_name[0]}.{base_name[1]}"
+                if len(base_name) == 2
+                else f"redacted_{redact_upload.name}"
+            )
+            st.download_button(
+                label="Download redacted XML",
+                data=sanitized,
+                file_name=dl_name,
+                mime="application/xml",
+                key="redact_download",
+            )
+        except ValueError as err:
+            st.error(str(err))
