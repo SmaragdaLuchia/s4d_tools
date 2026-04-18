@@ -1,0 +1,17 @@
+site_name: Visualizer
+
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.indexes
+
+nav:
+  - Home: index.md
+  - Parsed values:
+      - parsed-values/index.md
+      - SFD 2010: parsed-values/sfd-2010.md
+      - SFD Classic: parsed-values/sfd-classic.md
