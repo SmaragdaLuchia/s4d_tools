@@ -39,6 +39,18 @@ STANDARDIZED_STATISTICS_COLUMNS = [
     "volume_per_species",
 ]
 
+STANDARDIZED_SPECIES_TABLE_COLUMNS = [
+    "species_name",
+    "trees",
+    "volume_m3",
+]
+
+STANDARDIZED_SPECIES_PRODUCT_VOLUME_COLUMNS = [
+    "species_name",
+    "product_name",
+    "volume",
+]
+
 STANDARDIZED_STEMS_COLUMNS = [
     "stem_key",
     "object_key",
@@ -91,6 +103,10 @@ def empty_standardized_report(source_type: str, has_pri: bool = False) -> Dict[s
         "species_groups": empty_standardized_table(STANDARDIZED_SPECIES_GROUPS_COLUMNS),
         "products": empty_standardized_table(STANDARDIZED_PRODUCTS_COLUMNS),
         "statistics": empty_standardized_table(STANDARDIZED_STATISTICS_COLUMNS),
+        "species_table": empty_standardized_table(STANDARDIZED_SPECIES_TABLE_COLUMNS),
+        "species_product_volume": empty_standardized_table(
+            STANDARDIZED_SPECIES_PRODUCT_VOLUME_COLUMNS
+        ),
         "stems": empty_standardized_table(STANDARDIZED_STEMS_COLUMNS),
         "logs": empty_standardized_table(STANDARDIZED_LOGS_COLUMNS),
         "pricing_matrix": empty_standardized_table(STANDARDIZED_PRICING_COLUMNS),

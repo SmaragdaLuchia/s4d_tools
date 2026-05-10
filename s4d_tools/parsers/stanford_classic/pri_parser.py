@@ -475,14 +475,16 @@ class PRIParser:
             expected_data_length = num_logs_int * num_log_codes_int
             if len(log_data) != expected_data_length:
                 return pd.DataFrame()
-            
-            column_names = []
-            for code in log_codes:
-                column_name = PRI_LOG_CODES.get(code, f"unknown_code_{code}")
-                column_names.append(column_name)
-            
+
             log_array = np.array(log_data).reshape(num_logs_int, num_log_codes_int)
-            logs_df = pd.DataFrame(log_array, columns=column_names)
+
+            known_indices = [idx for idx, code in enumerate(log_codes) if code in PRI_LOG_CODES]
+            if not known_indices:
+                return pd.DataFrame()
+
+            column_names = [PRI_LOG_CODES[log_codes[idx]] for idx in known_indices]
+            filtered_log_array = log_array[:, known_indices]
+            logs_df = pd.DataFrame(filtered_log_array, columns=column_names)
             
             return logs_df
             

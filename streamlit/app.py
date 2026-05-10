@@ -11,7 +11,11 @@ if _root not in sys.path:
     sys.path.insert(0, _root)
 
 from s4d_tools import APTParser, PRDParser, PRIParser, HPRParser, PINParser
-from s4d_tools.aggregators.price_matrix import price_matrix_heatmaps_by_assortment
+from s4d_tools.aggregators import (
+    aggregate_volume_by_species_and_product,
+    pivot_volume_for_streamlit,
+    price_matrix_heatmaps_by_assortment,
+)
 from s4d_tools.transformers import (
     merge_pin_into_standardized,
     merge_pri_into_standardized,
@@ -20,6 +24,8 @@ from s4d_tools.transformers import (
 )
 from s4d_tools.transformers.standradized_schema import META_HAS_PRI, META_SOURCE_TYPE
 from s4d_tools.utils.sanitize_s4d2010 import sanitize_s4d2010_xml
+
+from chart_utils import assortment_breakdown_percent_chart
 
 
 def _split_apt_pin_uploads(
@@ -256,7 +262,12 @@ def visualize_data(
             col1.metric("Total Trees", f"{total_stems:,}")
         
         # Number of species
-        num_species = len(data['species_groups']) if 'species_groups' in data else 0
+        if 'species_table' in data and not data['species_table'].empty:
+            num_species = len(data['species_table'])
+        elif 'species_groups' in data and not data['species_groups'].empty:
+            num_species = len(data['species_groups'])
+        else:
+            num_species = 0
         col2.metric("Number of Species", num_species)
         
         # Number of products
@@ -284,7 +295,7 @@ def visualize_data(
                         'Trees': stems_per_species[:min_length]
                     })
                     st.bar_chart(species_df.set_index('Species'))
-    
+
     # TAB 2: Basic Info (Header, Objects)
     with tab2:
         st.header("Basic Info")
@@ -318,28 +329,12 @@ def visualize_data(
     # TAB 3: Species
     with tab3:
         st.header("Species")
-        
-        if 'species_groups' in data and not data['species_groups'].empty:
+
+        species_table = data.get('species_table', pd.DataFrame())
+        if not species_table.empty:
+            st.dataframe(species_table, use_container_width=True)
+        elif 'species_groups' in data and not data['species_groups'].empty:
             st.dataframe(data['species_groups'], use_container_width=True)
-            
-            # Species statistics
-            if 'statistics' in data and not data['statistics'].empty:
-                stats = data['statistics'].iloc[0]
-                if 'species_names' in stats and 'stems_per_species' in stats and 'volume_per_species' in stats:
-                    species_names = stats['species_names'] if isinstance(stats['species_names'], list) else []
-                    stems_per_species = stats['stems_per_species'] if isinstance(stats['stems_per_species'], list) else []
-                    volume_per_species = stats['volume_per_species'] if isinstance(stats['volume_per_species'], list) else []
-                    
-                    # Ensure all arrays have the same length
-                    min_length = min(len(species_names), len(stems_per_species), len(volume_per_species))
-                    if min_length > 0:
-                        st.subheader("Species Statistics")
-                        species_stats_df = pd.DataFrame({
-                            'Species': species_names[:min_length],
-                            'Trees': stems_per_species[:min_length],
-                            'Volume (raw units)': volume_per_species[:min_length]
-                        })
-                        st.dataframe(species_stats_df, use_container_width=True)
         else:
             st.info("Species data is missing.")
     
@@ -355,47 +350,107 @@ def visualize_data(
     # TAB 5: Statistics
     with tab5:
         st.header("Statistics")
-        
-        if 'statistics' in data and not data['statistics'].empty:
-            stats = data['statistics'].iloc[0]
-            
+
+        has_statistics = "statistics" in data and not data["statistics"].empty
+        if has_statistics:
+            stats = data["statistics"].iloc[0]
+
             col1, col2 = st.columns(2)
-            
+
             with col1:
-                st.metric("Total Trees", stats.get('total_stems', 0))
-            
+                st.metric("Total Trees", stats.get("total_stems", 0))
+
             # Stems per species chart
-            if 'species_names' in stats and 'stems_per_species' in stats:
-                species_names = stats['species_names'] if isinstance(stats['species_names'], list) else []
-                stems_per_species = stats['stems_per_species'] if isinstance(stats['stems_per_species'], list) else []
-                
+            if "species_names" in stats and "stems_per_species" in stats:
+                species_names = (
+                    stats["species_names"]
+                    if isinstance(stats["species_names"], list)
+                    else []
+                )
+                stems_per_species = (
+                    stats["stems_per_species"]
+                    if isinstance(stats["stems_per_species"], list)
+                    else []
+                )
+
                 min_length = min(len(species_names), len(stems_per_species))
                 if min_length > 0:
                     st.subheader("Trees by Species")
-                    species_chart_df = pd.DataFrame({
-                        'Species': species_names[:min_length],
-                        'Trees': stems_per_species[:min_length]
-                    })
-                    st.bar_chart(species_chart_df.set_index('Species'))
-            
+                    species_chart_df = pd.DataFrame(
+                        {
+                            "Species": species_names[:min_length],
+                            "Trees": stems_per_species[:min_length],
+                        }
+                    )
+                    st.bar_chart(species_chart_df.set_index("Species"))
+
             # Volume per species chart
-            if 'species_names' in stats and 'volume_per_species' in stats:
-                species_names = stats['species_names'] if isinstance(stats['species_names'], list) else []
-                volume_per_species = stats['volume_per_species'] if isinstance(stats['volume_per_species'], list) else []
-                
+            if "species_names" in stats and "volume_per_species" in stats:
+                species_names = (
+                    stats["species_names"]
+                    if isinstance(stats["species_names"], list)
+                    else []
+                )
+                volume_per_species = (
+                    stats["volume_per_species"]
+                    if isinstance(stats["volume_per_species"], list)
+                    else []
+                )
+
                 min_length = min(len(species_names), len(volume_per_species))
                 if min_length > 0:
-                    st.subheader("Volume by Species (raw units)")
-                    volume_chart_df = pd.DataFrame({
-                        'Species': species_names[:min_length],
-                        'Volume': volume_per_species[:min_length]
-                    })
-                    st.bar_chart(volume_chart_df.set_index('Species'))
-            
-            # Statistics DataFrame
-            st.subheader("Statistics DataFrame")
-            st.dataframe(data['statistics'], use_container_width=True)
+                    st.subheader("Volume by Species (cubic meters)")
+                    volume_chart_df = pd.DataFrame(
+                        {
+                            "Species": species_names[:min_length],
+                            "Volume": volume_per_species[:min_length],
+                        }
+                    )
+                    st.bar_chart(volume_chart_df.set_index("Species"))
+
+        sp_from_transformer = data.get("species_product_volume", pd.DataFrame())
+        if sp_from_transformer is not None and not sp_from_transformer.empty:
+            sp_long = sp_from_transformer.copy()
+            species_table = data.get("species_table", pd.DataFrame())
+            if (
+                species_table is not None
+                and not species_table.empty
+                and "species_name" in species_table.columns
+            ):
+                sp_order = species_table["species_name"].astype(str).tolist()
+            else:
+                sp_order = sorted(sp_long["species_name"].astype(str).unique().tolist())
         else:
+            sp_long, sp_order = aggregate_volume_by_species_and_product(
+                data.get("logs", pd.DataFrame()),
+                data.get("stems", pd.DataFrame()),
+                data.get("species_groups", pd.DataFrame()),
+                data.get("products", pd.DataFrame()),
+            )
+        showed_assortment_breakdown = False
+        if not sp_long.empty:
+            pivot = pivot_volume_for_streamlit(sp_long, sp_order)
+            if not pivot.empty:
+                showed_assortment_breakdown = True
+                st.subheader("Assortment breakdown")
+                st.caption(
+                    "Each row shows how volume is split across products for that species (100%)."
+                )
+                st.altair_chart(
+                    assortment_breakdown_percent_chart(
+                        pivot,
+                        title="",
+                        x_title="Share of volume (%)",
+                        y_title="Species",
+                        color_title="Product",
+                    ),
+                    use_container_width=True,
+                )
+
+        if has_statistics:
+            st.subheader("Statistics DataFrame")
+            st.dataframe(data["statistics"], use_container_width=True)
+        elif not showed_assortment_breakdown:
             st.info("Statistics data is missing.")
 
     if has_price_matrix and tab_price is not None:
@@ -638,28 +693,21 @@ with tab_visualize:
             has_apt = temp_apt_file is not None and os.path.exists(temp_apt_file)
             apt_parse_result = None
 
-            with st.spinner(f"Parsing {file_extension.upper()} file..."):
-                if file_type == 'hpr':
-                    parser = HPRParser(temp_file)
-                    parsed_data = parser.parse_all()
-                else:
-                    parser = PRDParser(temp_file)
-                    parsed_data = parser.parse()
-
             if has_apt:
                 with st.spinner("Parsing APT file (price matrix)..."):
                     apt_parse_result = APTParser(temp_apt_file).parse()
 
-            if file_type == 'hpr':
-                data = transform_hpr_to_standardized(
-                    parsed_data,
-                    apt_parse_result=apt_parse_result,
-                )
-            else:
-                data = transform_prd_to_standardized(
-                    parsed_data,
-                    apt_parse_result=apt_parse_result,
-                )
+            with st.spinner(f"Parsing {file_extension.upper()} file..."):
+                if file_type == "hpr":
+                    data = transform_hpr_to_standardized(
+                        HPRParser(temp_file).parse_all(),
+                        apt_parse_result=apt_parse_result,
+                    )
+                else:
+                    data = transform_prd_to_standardized(
+                        PRDParser(temp_file).parse(),
+                        apt_parse_result=apt_parse_result,
+                    )
 
             if temp_pin_file is not None and os.path.exists(temp_pin_file):
                 if file_type != 'hpr':
@@ -669,19 +717,14 @@ with tab_visualize:
                     )
                 else:
                     with st.spinner("Parsing PIN file (product / price matrix)..."):
-                        pin_data = PINParser(temp_pin_file).parse_all()
-                        data = merge_pin_into_standardized(data, pin_data)
+                        data = merge_pin_into_standardized(data, PINParser(temp_pin_file).parse_all())
 
             # Parse PRI file if provided
-            pri_data = None
             has_pri = False
             if temp_pri_file is not None and os.path.exists(temp_pri_file):
                 with st.spinner("Parsing PRI file..."):
-                    pri_parser = PRIParser(temp_pri_file)
-                    pri_data = pri_parser.parse()
                     has_pri = True
-
-                    data = merge_pri_into_standardized(data, pri_data)
+                    data = merge_pri_into_standardized(data, PRIParser(temp_pri_file).parse())
 
             st.success("File successfully parsed!")
 

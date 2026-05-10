@@ -6,6 +6,7 @@ on:
     paths:
       - "docs/**"
       - "mkdocs.yml"
+      - "requirements-docs.txt"
       - ".github/workflows/docs-pages.yml"
   workflow_dispatch:
 
