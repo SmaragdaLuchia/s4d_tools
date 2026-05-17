@@ -12,6 +12,7 @@ if _root not in sys.path:
 
 from s4d_tools import APTParser, PRDParser, PRIParser, HPRParser, PINParser
 from s4d_tools.aggregators import (
+    aggregate_stems_by_species,
     aggregate_volume_by_species_and_product,
     pivot_volume_for_streamlit,
     price_matrix_heatmaps_by_assortment,
@@ -290,10 +291,17 @@ def visualize_data(
                 min_length = min(len(species_names), len(stems_per_species))
                 if min_length > 0:
                     st.subheader("Trees by Species")
-                    species_df = pd.DataFrame({
-                        'Species': species_names[:min_length],
-                        'Trees': stems_per_species[:min_length]
-                    })
+                    stems_agg = aggregate_stems_by_species(
+                        data.get("stems", pd.DataFrame()),
+                        data.get("species_groups", pd.DataFrame()),
+                    )
+                    if not stems_agg.empty:
+                        species_df = stems_agg.rename(columns={"species_name": "Species", "tree_count": "Trees"})
+                    else:
+                        species_df = pd.DataFrame({
+                            'Species': species_names[:min_length],
+                            'Trees': stems_per_species[:min_length],
+                        })
                     st.bar_chart(species_df.set_index('Species'))
 
     # TAB 2: Basic Info (Header, Objects)
@@ -376,12 +384,19 @@ def visualize_data(
                 min_length = min(len(species_names), len(stems_per_species))
                 if min_length > 0:
                     st.subheader("Trees by Species")
-                    species_chart_df = pd.DataFrame(
-                        {
-                            "Species": species_names[:min_length],
-                            "Trees": stems_per_species[:min_length],
-                        }
+                    stems_agg = aggregate_stems_by_species(
+                        data.get("stems", pd.DataFrame()),
+                        data.get("species_groups", pd.DataFrame()),
                     )
+                    if not stems_agg.empty:
+                        species_chart_df = stems_agg.rename(columns={"species_name": "Species", "tree_count": "Trees"})
+                    else:
+                        species_chart_df = pd.DataFrame(
+                            {
+                                "Species": species_names[:min_length],
+                                "Trees": stems_per_species[:min_length],
+                            }
+                        )
                     st.bar_chart(species_chart_df.set_index("Species"))
 
             # Volume per species chart
