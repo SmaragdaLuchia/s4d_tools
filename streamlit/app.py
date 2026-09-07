@@ -30,6 +30,35 @@ from chart_utils import assortment_breakdown_percent_chart, productivity_rates
 
 DEMO_VIDEO_URL = "https://youtu.be/6R_mGvelb8Q"
 
+# Downloadable sample files zip (docs-site/public/samples/), all describing the same small harvest
+SAMPLES_ZIP = os.path.join(_root, "docs-site", "public", "samples", "s4d-tools-samples.zip")
+
+
+@st.cache_data
+def _read_sample_file(path: str) -> bytes:
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def _render_sample_downloads() -> None:
+    """Single download button for the bundled sample-files archive."""
+    if not os.path.isfile(SAMPLES_ZIP):
+        return
+    st.download_button(
+        label="🧪 Download sample files",
+        data=_read_sample_file(SAMPLES_ZIP),
+        file_name="s4d-tools-samples.zip",
+        mime="application/zip",
+        type="primary",
+        use_container_width=True,
+        help=(
+            "No harvester files at hand? One sample file per supported format, "
+            "all describing the same small harvest. Extract the zip, then drop the "
+            "files into the uploaders — e.g. sample.hpr + sample.pin, or "
+            "sample.prd + sample.pri + sample.apt."
+        ),
+    )
+
 
 def _split_apt_pin_uploads(
     files: Any,
@@ -67,7 +96,11 @@ st.set_page_config(
 )
 
 # Title and top-level mode (visualize vs redact)
-st.title("🌲 Harvester File Analysis")
+_col_title, _col_samples = st.columns([3, 1], vertical_alignment="center")
+with _col_title:
+    st.title("🌲 Harvester File Analysis")
+with _col_samples:
+    _render_sample_downloads()
 tab_visualize, tab_redact, tab_demo = st.tabs(
     ["📊 Data visualization", "🔒 Data redaction (GDPR)", "🎬 Application demo"]
 )

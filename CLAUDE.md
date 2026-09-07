@@ -17,13 +17,11 @@ The primary interface is a Streamlit web app; `s4d_tools` is the reusable Python
 # Install (Python 3.11+)
 pip install -e .                         # development install from repo
 pip install -e ".[dev]"                  # with test dependencies
-pip install -e ".[ui]"                   # with Streamlit UI dependencies
-pip install -e ".[all]"                  # with all optional dependencies
+pip install streamlit                    # Streamlit UI dependencies (no extra defined for these)
 pip install s4d-tools                    # from PyPI (when published)
 
 # Run the app (requires Streamlit installation)
-streamlit run streamlit/app.py           # English UI
-streamlit run streamlit/app_et.py        # Estonian UI variant
+python -m streamlit run streamlit/app.py
 
 # Tests
 pytest tests/ -v                         # full suite
