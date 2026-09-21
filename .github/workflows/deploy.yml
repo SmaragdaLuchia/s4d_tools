@@ -35,6 +35,7 @@ jobs:
 
       - name: Deploy using Podman
         run: |
+          export HOME=/home/smaragdasarana
           export XDG_RUNTIME_DIR=/run/user/$(id -u)
           git config --global --add safe.directory /home/smaragdasarana/Visualizer
           cd /home/smaragdasarana/Visualizer
